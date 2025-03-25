@@ -2143,3 +2143,296 @@ We wanted to take an updated look at function calling, particularly after a lead
 
 We hoped that his blog post has helped you understand how you can uses tools/function calls when using Node.js and the Ollama JavaScript APIs and some of the things to look out for as you explore how they might work(or not) in your use case.
 
+
+"""
+
+Tool support
+July 25, 2024
+ollama with a box of tools, ready to serve you
+
+Ollama now supports tool calling with popular models such as Llama 3.1. This enables a model to answer a given prompt using tool(s) it knows about, making it possible for models to perform more complex tasks or interact with the outside world.
+
+Example tools include:
+
+Functions and APIs
+Web browsing
+Code interpreter
+much more!
+Tool calling
+To enable tool calling, provide a list of available tools via the tools field in Ollama’s API.
+
+import ollama
+
+response = ollama.chat(
+    model='llama3.1',
+    messages=[{'role': 'user', 'content':
+        'What is the weather in Toronto?'}],
+
+		# provide a weather checking tool to the model
+    tools=[{
+      'type': 'function',
+      'function': {
+        'name': 'get_current_weather',
+        'description': 'Get the current weather for a city',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'city': {
+              'type': 'string',
+              'description': 'The name of the city',
+            },
+          },
+          'required': ['city'],
+        },
+      },
+    },
+  ],
+)
+
+print(response['message']['tool_calls'])
+Supported models will now answer with a tool_calls response. Tool responses can be provided via messages with the tool role. See API documentation for more information.
+
+Supported models
+A list of supported models can be found under the Tools category on the models page:
+
+Llama 3.1
+Mistral Nemo
+Firefunction v2
+Command-R +
+Note: please check if you have the latest model by running ollama pull <model>
+
+ollama.com tool models
+
+OpenAI compatibility
+Ollama’s OpenAI compatible endpoint also now supports tools, making it possible to switch to using Llama 3.1 and other models.
+
+import openai
+
+openai.base_url = "http://localhost:11434/v1"
+openai.api_key = 'ollama'
+
+response = openai.chat.completions.create(
+	model="llama3.1",
+	messages=messages,
+	tools=tools,
+)
+Full examples
+Python
+JavaScript
+Future improvements
+Streaming tool calls: stream tool calls back to begin taking action faster when multiple tools are returned
+Tool choice: force a model to use a tool
+Let’s build together
+We are so excited to bring you tool support, and see what you build with it!
+
+If you have any feedback, please do not hesitate to tell us either in our Discord or via hello@ollama.com.
+
+"""
+
+```
+Power-up Ollama chatbots with tools
+How to use LangChain ‘tools’ with a locally run, open-source LLM
+James Hicks
+The Pythoneers
+James Hicks
+
+·
+Follow
+
+Published in
+The Pythoneers
+
+·
+6 min read
+·
+Apr 13, 2024
+125
+
+
+6
+
+
+
+
+
+
+Produced with DreamStudio
+In this tutorial, we’ll build a locally run chatbot application with an open-source Large Language Model (LLM), augmented with LangChain ‘tools’.
+
+Tools endow LLMs with additional powers like running code or web search. You can also build custom tools which will be the focus of this tutorial.
+
+We’ll use Streamlit, LangChain, and Ollama to implement our chatbot.
+
+Ollama — to run LLMs locally and for free.
+LangChain — for orchestration of our LLM application.
+Streamlit — for the frontend interface.
+Let’s get an LLM up and running locally. First, we need to install Ollama on our machine. Download Ollama from the official website.
+
+Once installed. Run the following in your command line:
+
+ollama pull mistral:instruct
+This downloads the Mistral Instruct model onto your machine. Ollama has a directory of several models to choose from. Through trial and error, I have found Mistral Instruct to be the most suitable open source model for using tools.
+
+Next we’ll install Streamlit and LangChain. I use Pipenv for package management. But you could also use regular Pip.
+
+pipenv install langchain langchain-community streamlit
+Now create a python file for our application ‘chatbot.py’. Then import the dependencies. We’ll cover each in more detail below. For now, I’ve provided short comments explaining how each dependency is used.
+
+import streamlit as st # to render the user interface.
+from langchain_community.llms import Ollama # to use Ollama llms in langchain
+from langchain_core.prompts import ChatPromptTemplate # crafts prompts for our llm
+from langchain_community.chat_message_histories import\
+StreamlitChatMessageHistory # stores message history
+from langchain_core.tools import tool # tools for our llm
+from langchain.tools.render import render_text_description # to describe tools as a string 
+from langchain_core.output_parsers import JsonOutputParser # ensure JSON input for tools
+from operator import itemgetter # to retrieve specific items in our chain.
+Streamlit apps run from top to bottom every time the user interacts with the program. This means we need to define everything we need up front, starting with our LLM.
+
+# Set up the LLM which will power our application.
+model = Ollama(model='mistral:instruct')
+Next let’s define the tools which our LLM will access. LLMs are famously poor at maths. So we’ll keep it simple by giving the LLM tools for basic arithmetic.
+
+@tool
+def add(first: int, second: int) -> int:
+    "Add two integers."
+    return first + second
+As you can see, the first tool simply adds two numbers together. It’s a plain old python function with type annotation, and a @tool decorator. The decorator enhances our function with some useful properties.
+
+print(add.name)
+print(add.description)
+print(add.args)
+add
+add(first: int, second: int) -> int - Add two integers.
+{'first': {'title': 'First', 'type': 'integer'}, 'second': {'title': 'Second', 'type': 'integer'}
+It also makes our function runnable using LangChain.
+
+add.invoke({'first':3, 'second':6})
+9
+Our second tool follows a similar logic.
+
+@tool
+def multiply(first: int, second: int) -> int:
+    """Multiply two integers together."""
+    return first * second
+This covers basic arithmetic. But our LLM is going to have to decide when to:
+
+Add
+Multiply
+Just chat!
+We’ll give it another tool for the last option.
+
+@tool
+def converse(input: str) -> str:
+    "Provide a natural language response using the user input."
+    return model.invoke(input)
+This tool takes the user input and passes it to our LLM for a normal response. (It will become clear why we need another tool for this shortly, when we build out our LangChain ‘chain’).
+
+We can get a text summary of our tools like so:
+
+tools = [add, multiply, converse]
+rendered_tools = render_text_description(tools)
+print(rendered_tools)
+add: add(first: int, second: int) -> int - Add two integers.
+multiply: multiply(first: int, second: int) -> int - Multiply two integers together.
+converse: converse(input: str) -> str - Provide a natural language response using the user input.
+Now we need a system prompt to tell our LLM what to do.
+
+system_prompt = f"""You are an assistant that has access to the following set of tools.
+Here are the names and descriptions for each tool:
+
+{rendered_tools}
+Given the user input, return the name and input of the tool to use.
+Return your response as a JSON blob with 'name' and 'arguments' keys.
+The value associated with the 'arguments' key should be a dictionary of parameters."""
+This instructs our LLM to respond to user input with a piece JSON containing the ‘name’ of the chosen tool and the relevant ‘arguments’.
+
+We can pass the user input using LangChain’s ChatPromptTemplate.
+
+prompt = ChatPromptTemplate.from_messages(
+    [("system", system_prompt), ("user", "{input}")]
+)
+At this point, we are ready construct a LangChain chain to test our logic so far.
+
+chain = prompt | model | JsonOutputParser()
+This chain combines our prompt with the LLM and passes the result through JsonOuputParser, which checks the output is in the correct format.
+
+chain.invoke({'input': 'What is 3 times 23'})
+{'name': 'multiply', 'arguments': {'first': 3, 'second': 23}}
+chain.invoke({'input': 'How are you today?'})
+{'name': 'converse', 'arguments': {'input': 'How are you today?'}}
+Looks like our LLM is choosing the right tool for each input. But how do we actually run the tool to return a response to the user?
+
+# Define a function which returns the chosen tool
+# to be run as part of the chain.
+def tool_chain(model_output):
+    tool_map = {tool.name: tool for tool in tools}
+    chosen_tool = tool_map[model_output["name"]]
+    return itemgetter("arguments") | chosen_tool
+This function:
+
+Takes the model output e.g. {‘name’: ‘multiply’, ‘arguments’: {‘first’: 3, ‘second’: 23}}.
+Creates a dictionary mapping of the tools e.g. {'add': <tool_object>, 'multiply': <tool_object>, 'converse': <tool_object>}.
+Selects the chosen tool based on the value associated with the ‘name’ key of the model output e.g. 'multiply'
+Returns a runnable that passes the arguments e.g. {‘first’: 3, ‘second’: 23} to the chosen tool.
+We can add this to our chain and test our LLM with tools.
+
+chain = prompt | model | JsonOutputParser() | tool_chain
+chain.invoke({'input': 'What is 3 times 23'})
+69
+Bingo! Our LLM is using its tools to get to the right answer.
+
+Now its time to turn this chain into an intelligent chatbot.
+
+First, we configure the Streamlit chat history:
+
+# Set up message history.
+msgs = StreamlitChatMessageHistory(key="langchain_messages")
+if len(msgs.messages) == 0:
+    msgs.add_ai_message("I can add, multiply, or just chat! How can I help you?")
+The StreamlitChatMessageHistory object provides an ability store chat messages in the Streamlit session state. This allows the messages to persist across re-runs of the Streamlit application.
+
+Each run, we check if there are any messages, otherwise we add an initial AI assistant message to the history.
+
+# Set the page title.
+st.title("Chatbot with tools")
+# Render the chat history.
+for msg in msgs.messages:
+    st.chat_message(msg.type).write(msg.content)
+Then we render the page title and full message history.
+
+Finally, we add a component to take user input and respond accordingly.
+
+# React to user input
+if input := st.chat_input("What is up?"):
+# Display user input and save to message history.
+    st.chat_message("user").write(input)
+    msgs.add_user_message(input) 
+    # Invoke chain to get reponse.
+    response = chain.invoke({'input': input})                 
+    # Display AI assistant response and save to message history.
+    st.chat_message("assistant").write(str(response))
+    msgs.add_ai_message(response)
+That’s it! We now have a fully functioning chat interface powered by an LLM with access to tools.
+
+Have a go by running the following in the command line.
+
+streamlit run chatbot.py
+
+Screenshot by author
+Well done if you got this far!
+
+In this walkthrough we:
+
+Installed Ollama to run LLMs locally.
+Defined a set of LangChain ‘tools’.
+Gave our LLM access to tools using a LangChain ‘chain’.
+Created a chat user interface for the LLM using Streamlit.
+All the code is available on my Github here. Feel free to clone the repo as a base for your own project.
+
+Today, we only scratched the surface of what is possible with LangChain tools. Now you are equipped to give your own chatbot access to more sophisticated tools available here. For example, why not try giving your own LLM access to web search using Tavily?
+
+Thanks for reading and happy coding!
+
+To produce this post, I relied heavily on the Langchain and Streamlit documentation. Be sure to check these resources out if you want to go into more detail on any of the topics discussed.
+```
