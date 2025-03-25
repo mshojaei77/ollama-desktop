@@ -1,0 +1,30 @@
+{
+  "name": "ollama-desktop",
+  "version": "1.0.0",
+  "main": "src/main/index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "tailwind:init": "tailwindcss init -p"
+  },
+  "build": {
+    "appId": "com.yourname.ollama-desktop",
+    "productName": "Ollama Desktop",
+    "mac": {
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "dependencies": {
+    "axios": "^1.8.4",
+    "clsx": "^2.1.1",
+    "electron": "^35.0.3",
+    "tailwind-merge": "^3.0.2"
+  }
+}

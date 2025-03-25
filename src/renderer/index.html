@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Ollama Desktop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-background text-foreground">
+  <div class="container">
+    <header>
+      <h1 class="text-2xl font-bold">Ollama Desktop</h1>
+      <div class="model-selector">
+        <label for="model-select" class="text-sm font-medium">Model:</label>
+        <select id="model-select" class="bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"></select>
+        <button id="pull-model-btn" class="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium">Pull New Model</button>
+      </div>
+    </header>
+    
+    <div class="chat-container">
+      <div id="chat-messages" class="messages-container"></div>
+      
+      <div class="input-container">
+        <textarea id="message-input" class="flex-1 bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none" placeholder="Type your message here..."></textarea>
+        <button id="send-btn" class="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium">Send</button>
+      </div>
+    </div>
+
+    <div id="model-pull-modal" class="modal">
+      <div class="modal-content">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-semibold">Pull a Model</h2>
+          <button class="close text-muted-foreground hover:text-foreground">&times;</button>
+        </div>
+        <input type="text" id="new-model-name" class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring mb-4" placeholder="Enter model name (e.g., llama3.2)">
+        <button id="confirm-pull-btn" class="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium">Pull</button>
+        <div id="pull-status" class="mt-4 p-2 rounded-md"></div>
+      </div>
+    </div>
+  </div>
+  
+  <script src="index.js"></script>
+</body>
+</html>
