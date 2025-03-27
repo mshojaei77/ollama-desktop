@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
+import db  # Import our new database module
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -77,6 +78,9 @@ async def cleanup_session(session_id: str):
         await active_chatbots[session_id].cleanup()
         del active_chatbots[session_id]
         app_logger.info(f"Cleaned up chatbot session: {session_id}")
+    
+    # Mark session as inactive in database
+    await db.deactivate_session(session_id)
 
 
 # ----- API Endpoints -----
@@ -90,15 +94,29 @@ async def root():
         "active_sessions": len(active_clients) + len(active_chatbots)
     }
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the database on application startup"""
+    db.init_db()
+    db.migrate_database()
+    app_logger.info("Database initialized and migrated")
+
 @app.post("/chat/initialize", response_model=InitializeResponse)
 async def initialize_chatbot(request: InitializeRequest):
     """Initialize a standalone Ollama chatbot"""
     try:
+        # Validate model name is not empty
+        if not request.model_name or request.model_name.strip() == "":
+            raise HTTPException(status_code=400, detail="Model name cannot be empty")
+        
         session_id = request.session_id or generate_session_id()
         
         # Clean up existing session if it exists
         if session_id in active_chatbots:
             await cleanup_session(session_id)
+        
+        # Log the initialization attempt with the model name
+        app_logger.info(f"Initializing chatbot with model: {request.model_name}")
         
         # Create new chatbot
         chatbot = await OllamaMCPPackage.create_standalone_chatbot(
@@ -109,14 +127,30 @@ async def initialize_chatbot(request: InitializeRequest):
         # Store in active sessions
         active_chatbots[session_id] = chatbot
         
+        # Save to database
+        await db.create_session(
+            session_id=session_id,
+            model_name=request.model_name,
+            session_type="chatbot",
+            system_message=request.system_message
+        )
+        
         return InitializeResponse(
             session_id=session_id,
             status="ready",
             model=request.model_name
         )
+    except ValueError as e:
+        # Handle specific value errors
+        app_logger.error(f"Value error initializing chatbot: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
+    except HTTPException as http_exc:
+        # Re-raise HTTPExceptions directly so FastAPI handles them correctly
+        raise http_exc
     except Exception as e:
-        app_logger.error(f"Error initializing chatbot: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error initializing chatbot: {str(e)}")
+        app_logger.error(f"Error initializing chatbot: {str(e)}", exc_info=True)
+        # Handle other unexpected errors as 500
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/chat/message", response_model=ChatResponse)
 async def chat_message(request: ChatRequest):
@@ -126,7 +160,18 @@ async def chat_message(request: ChatRequest):
     
     try:
         chatbot = active_chatbots[request.session_id]
+        
+        # Save user message to history
+        await db.add_chat_message(request.session_id, "user", request.message)
+        
+        # Get response from chatbot
         response = await chatbot.chat(request.message)
+        
+        # Save assistant response to history
+        await db.add_chat_message(request.session_id, "assistant", response)
+        
+        # Update session activity
+        await db.update_session_activity(request.session_id)
         
         return ChatResponse(
             response=response,
@@ -168,14 +213,25 @@ async def connect_to_mcp(request: MCPServerConnectRequest):
         # Store in active clients
         active_clients[session_id] = client
         
+        # Save to database
+        await db.create_session(
+            session_id=session_id,
+            model_name=request.model_name,
+            session_type="mcp_client"
+        )
+        
         return InitializeResponse(
             session_id=session_id,
             status="connected",
             model=request.model_name
         )
+    except HTTPException as http_exc:
+        # Re-raise HTTPExceptions directly so FastAPI handles them correctly
+        raise http_exc
     except Exception as e:
         app_logger.error(f"Error connecting to MCP server: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error connecting to MCP server: {str(e)}")
+        # Handle other unexpected errors as 500
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/mcp/query", response_model=ChatResponse)
 async def process_mcp_query(request: ChatRequest):
@@ -247,22 +303,91 @@ async def delete_session(session_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     
     # Schedule cleanup to happen in the background
+    # The cleanup_session function will handle resource release and database deactivation
     background_tasks.add_task(cleanup_session, session_id)
     
+    # Determine current active sessions *before* cleanup potentially finishes
+    current_active_sessions = list(set(list(active_clients.keys()) + list(active_chatbots.keys())))
+    if session_id in current_active_sessions:
+         # Exclude the session being deleted if it's still in the in-memory dicts
+         # Note: This is a snapshot, the background task might remove it shortly after.
+        current_active_sessions.remove(session_id)
+
     return StatusResponse(
         status="cleanup_scheduled",
-        active_sessions=list(set(list(active_clients.keys()) + list(active_chatbots.keys()))),
+        active_sessions=current_active_sessions,
         message=f"Session {session_id} scheduled for cleanup"
     )
 
 @app.get("/sessions", response_model=StatusResponse)
 async def get_sessions():
     """Get active sessions"""
-    sessions = list(set(list(active_clients.keys()) + list(active_chatbots.keys())))
+    # Get active sessions from database
+    db_sessions = await db.get_active_sessions()
+    session_ids = [session["session_id"] for session in db_sessions]
+    
     return StatusResponse(
         status="ok",
-        active_sessions=sessions
+        active_sessions=session_ids
     )
+
+@app.get("/chat/history/{session_id}")
+async def get_chat_history(session_id: str, limit: int = 100):
+    """Get chat history for a session"""
+    # Check if session exists
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    # Get chat history
+    history = await db.get_chat_history(session_id, limit)
+    
+    return {"session_id": session_id, "history": history}
+
+@app.get("/models/recent")
+async def get_recent_models(limit: int = 5):
+    """Get recently used models"""
+    try:
+        models = await db.get_recently_used_models(limit)
+        return {"models": models}
+    except Exception as e:
+        app_logger.error(f"Error getting recent models: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting recent models: {str(e)}")
+
+@app.get("/models")
+async def get_models(sort_by: Optional[str] = None):
+    """
+    Get all available models, ensuring the database is updated with models
+    currently available in Ollama, sorted by specified criteria.
+    
+    Optional query parameter:
+    - sort_by: 'last_used' to sort by most recently used, 'name' for alphabetical
+    """
+    try:
+        app_logger.info(f"Getting models with sort_by={sort_by}")
+        
+        # 1. Get currently available models from Ollama
+        available_models = await OllamaMCPPackage.get_available_models()
+        app_logger.info(f"Available models from Ollama: {available_models}")
+        
+        # 2. Ensure each available model exists in the database
+        if available_models:
+            for model_info in available_models:
+                # Assuming get_available_models returns a list of dicts with a 'name' key
+                # Adjust if the return format is different (e.g., list of strings)
+                model_name = model_info.get('name') if isinstance(model_info, dict) else model_info
+                if model_name:
+                    await db.ensure_model_exists(model_name)
+                    
+        # 3. Get potentially updated and sorted list from the database
+        models = await db.get_models(sort_by)
+        app_logger.info(f"Models from database: {models}")
+        
+        return {"models": models}
+        
+    except Exception as e:
+        app_logger.error(f"Error getting models: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting models: {str(e)}")
 
 
 # ----- Programmatic API Examples -----

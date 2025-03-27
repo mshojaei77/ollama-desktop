@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld(
   'api', {
     listModels: () => ipcRenderer.invoke('list-models'),
+    listRecentModels: () => ipcRenderer.invoke('list-recent-models'),
     initializeChat: (params) => ipcRenderer.invoke('initialize-chat', params),
     chat: (params) => ipcRenderer.invoke('chat', params),
     closeSession: (params) => ipcRenderer.invoke('close-session', params),

@@ -19,29 +19,72 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Load available models
     async function loadModels() {
       try {
-        const models = await window.api.listModels();
-        modelSelect.innerHTML = '';
+        // Try to get recently used models first
+        const recentModels = await window.api.listRecentModels();
         
-        if (models.error) {
-          alert('Error loading models: ' + models.error);
+        if (recentModels.error) {
+          console.warn('Error loading recent models:', recentModels.error);
+          console.log('Falling back to regular models list...');
+          
+          // Fallback to regular models endpoint
+          const allModels = await window.api.listModels();
+          if (allModels.error) {
+            throw new Error(`Failed to load models: ${allModels.error}`);
+          }
+          
+          populateModelDropdown(allModels);
           return;
         }
         
-        // Handle the new API response format (array of strings instead of objects)
-        models.forEach(model => {
-          const option = document.createElement('option');
-          // Check if model is a string or an object with a name property
-          option.value = typeof model === 'string' ? model : model.name;
-          option.textContent = typeof model === 'string' ? model : model.name;
-          modelSelect.appendChild(option);
-        });
-        
-        if (models.length > 0) {
-          modelSelect.value = typeof models[0] === 'string' ? models[0] : models[0].name;
+        if (!recentModels || recentModels.length === 0) {
+          console.warn('No recent models found, trying regular models endpoint');
+          const allModels = await window.api.listModels();
+          populateModelDropdown(allModels);
+          return;
         }
+        
+        populateModelDropdown(recentModels);
       } catch (error) {
         console.error('Error loading models:', error);
-        alert('Failed to load models. Is the FastAPI server running?');
+        
+        // Display error in UI
+        const errorElement = document.createElement('div');
+        errorElement.className = 'message system-message';
+        errorElement.textContent = `Failed to load models: ${error.message}. Is the FastAPI server running?`;
+        chatMessages.appendChild(errorElement);
+        
+        // Add a refresh button
+        const refreshButton = document.createElement('button');
+        refreshButton.textContent = 'Retry';
+        refreshButton.className = 'bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium';
+        refreshButton.onclick = loadModels;
+        chatMessages.appendChild(refreshButton);
+      }
+    }
+  
+    // Helper function to populate model dropdown
+    function populateModelDropdown(models) {
+      modelSelect.innerHTML = '';
+      
+      if (!models || models.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No models available';
+        modelSelect.appendChild(option);
+        return;
+      }
+      
+      // Handle different response formats (simple strings or objects with name property)
+      models.forEach(model => {
+        const option = document.createElement('option');
+        const modelName = typeof model === 'string' ? model : model.name;
+        option.value = modelName;
+        option.textContent = modelName;
+        modelSelect.appendChild(option);
+      });
+      
+      if (models.length > 0) {
+        modelSelect.value = typeof models[0] === 'string' ? models[0] : models[0].name;
       }
     }
   

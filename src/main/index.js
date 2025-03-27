@@ -88,6 +88,18 @@ ipcMain.handle('list-models', async () => {
   }
 });
 
+// NEW HANDLER: List models sorted by last used time
+ipcMain.handle('list-recent-models', async () => {
+  try {
+    // Use the new endpoint that sorts by last_used
+    const response = await apiRequest('/models?sort_by=last_used');
+    return response.models || [];
+  } catch (error) {
+    console.error('Error fetching recent models:', error);
+    return { error: error.message };
+  }
+});
+
 // Initialize a chat session
 ipcMain.handle('initialize-chat', async (_, { model, systemMessage }) => {
   try {
