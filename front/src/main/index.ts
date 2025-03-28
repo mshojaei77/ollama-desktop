@@ -13,8 +13,23 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // Allow CORS requests in development mode
+      webSecurity: !is.dev
     }
+  })
+  mainWindow.webContents.openDevTools()
+
+  // Set CSP headers to allow API connections
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; connect-src 'self' http://localhost:8000; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+        ]
+      }
+    })
   })
 
   mainWindow.on('ready-to-show', () => {
