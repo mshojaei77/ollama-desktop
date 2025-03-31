@@ -3,6 +3,11 @@ import { Input } from '@renderer/components/ui/input'
 import { Button } from '@renderer/components/ui/button'
 import axios from 'axios'
 import { useQuery, useMutation, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github.css'
+import '@renderer/styles/markdown.css'
 
 // Create API client
 const apiClient = axios.create({
@@ -563,7 +568,7 @@ function Chat(): JSX.Element {
         </div>
       ) : (
         <>
-          {/* Messages container - Update with model-specific icons */}
+          {/* Messages container - Update with markdown rendering */}
           <div className="flex-1 p-4 overflow-y-auto">
             <div className="max-w-4xl mx-auto space-y-6">
               {messages.map((message) => (
@@ -595,7 +600,57 @@ function Chat(): JSX.Element {
                           : 'bg-[hsl(var(--card))] border border-[hsl(var(--border))]'
                       }`}
                     >
-                      <div className="whitespace-pre-wrap">{message.content}</div>
+                      {message.role === 'user' ? (
+                        // User messages remain as plain text with whitespace preserved
+                        <div className="whitespace-pre-wrap">{message.content}</div>
+                      ) : (
+                        // Assistant messages rendered as markdown
+                        <div className="markdown-content">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeHighlight]}
+                            components={{
+                              // Customize code blocks
+                              code({node, inline, className, children, ...props}) {
+                                const match = /language-(\w+)/.exec(className || '')
+                                return !inline && match ? (
+                                  <div className="code-block-wrapper">
+                                    <div className="code-block-header">
+                                      <span>{match[1]}</span>
+                                      <button 
+                                        onClick={() => copyToClipboard(String(children).replace(/\n$/, ''))}
+                                        className="code-copy-button"
+                                      >
+                                        Copy
+                                      </button>
+                                    </div>
+                                    <pre className={className}>
+                                      <code className={className} {...props}>
+                                        {children}
+                                      </code>
+                                    </pre>
+                                  </div>
+                                ) : (
+                                  <code className={className} {...props}>
+                                    {children}
+                                  </code>
+                                )
+                              },
+                              // Style links to open in new tab
+                              a: ({node, ...props}) => (
+                                <a 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="text-blue-500 hover:underline"
+                                  {...props}
+                                />
+                              )
+                            }}
+                          >
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                     
                     {message.role === 'assistant' && (
