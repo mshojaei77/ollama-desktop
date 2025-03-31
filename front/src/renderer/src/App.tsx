@@ -1,13 +1,13 @@
-import Versions from './components/Versions'
-import electronLogo from './assets/electron.svg'
-import { Button } from './components/ui/button'
+import Sidebar from './containers/Sidebar'
 import Chat from './containers/Chat'
-function App(): JSX.Element {
-  const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
 
+function App(): JSX.Element {
   return (
-    <div className="container mx-auto p-4 flex flex-col items-center justify-center min-h-screen">
-      <Chat />
+    <div className="flex h-screen w-full overflow-hidden bg-white">
+      <Sidebar />
+      <div className="flex-1">
+        <Chat />
+      </div>
     </div>
   )
 }
