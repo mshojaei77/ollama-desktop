@@ -278,6 +278,54 @@ async def get_chat_history(session_id: str, limit: int = 100) -> List[Dict]:
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
+async def get_filtered_chat_history(
+    session_id: str, 
+    limit: int = 100, 
+    offset: int = 0,
+    role: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> List[Dict]:
+    """
+    Get filtered chat history for a session
+    
+    Args:
+        session_id: The session ID to get history for
+        limit: Maximum number of messages to return
+        offset: Number of messages to skip (for pagination)
+        role: Filter by message role ('user' or 'assistant')
+        start_date: Filter messages after this date (format: YYYY-MM-DD)
+        end_date: Filter messages before this date (format: YYYY-MM-DD)
+    """
+    async with async_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build query with filters
+        query = "SELECT role, message, timestamp FROM chat_history WHERE session_id = ?"
+        params = [session_id]
+        
+        # Add role filter if provided
+        if role:
+            query += " AND role = ?"
+            params.append(role)
+        
+        # Add date filters if provided
+        if start_date:
+            query += " AND date(timestamp) >= date(?)"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND date(timestamp) <= date(?)"
+            params.append(end_date)
+        
+        # Add order and pagination
+        query += " ORDER BY timestamp ASC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
 # ----- Database migration functions -----
 
 def check_column_exists(conn, table, column):

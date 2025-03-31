@@ -83,6 +83,16 @@ class StatusResponse(BaseModel):
     active_sessions: List[str]
     message: Optional[str] = None
 
+class ChatHistoryItem(BaseModel):
+    role: str
+    message: str
+    timestamp: str
+
+class ChatHistoryResponse(BaseModel):
+    session_id: str
+    history: List[ChatHistoryItem]
+    count: int
+
 
 # ----- Helper Functions -----
 
@@ -383,18 +393,51 @@ async def get_sessions():
         active_sessions=session_ids
     )
 
-@app.get("/chat/history/{session_id}")
-async def get_chat_history(session_id: str, limit: int = 100):
-    """Get chat history for a session"""
+@app.get("/chat/history/{session_id}", response_model=ChatHistoryResponse, tags=["Sessions"])
+async def get_chat_history(
+    session_id: str, 
+    limit: int = 100, 
+    offset: int = 0,
+    role: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """
+    Get chat history for a session
+    
+    - Returns messages exchanged in the specified session
+    - Can be filtered by role ('user' or 'assistant')
+    - Can be filtered by date range
+    - Supports pagination with limit and offset parameters
+    
+    Args:
+        session_id: Unique identifier for the session
+        limit: Maximum number of messages to return (default: 100)
+        offset: Number of messages to skip for pagination (default: 0)
+        role: Filter messages by role ('user' or 'assistant'), if provided
+        start_date: Filter messages after this date (format: YYYY-MM-DD)
+        end_date: Filter messages before this date (format: YYYY-MM-DD)
+    """
     # Check if session exists
     session = await db.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     
-    # Get chat history
-    history = await db.get_chat_history(session_id, limit)
+    # Get chat history with filters
+    history = await db.get_filtered_chat_history(
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+        role=role,
+        start_date=start_date,
+        end_date=end_date
+    )
     
-    return {"session_id": session_id, "history": history}
+    return ChatHistoryResponse(
+        session_id=session_id,
+        history=history,
+        count=len(history)
+    )
 
 @app.get("/models/recent")
 async def get_recent_models(limit: int = 5):
