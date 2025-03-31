@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Input } from '../components/ui/input'
 import { Button } from '../components/ui/button'
-import { Search, PlusCircle, MessageSquare, Wrench, Database, Settings, Bot } from 'lucide-react'
+import { Search, PlusCircle, MessageSquare, Wrench, Settings, Bot } from 'lucide-react'
 import ollamaLogo from '../assets/ollama.png'
 
 // This interface defines the structure for a chat session

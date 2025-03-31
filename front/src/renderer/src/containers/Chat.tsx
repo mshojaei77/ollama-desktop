@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import 'highlight.js/styles/github.css'
-import '@renderer/styles/markdown.css'
+import '../styles/markdown.css'
 
 // Create API client
 const apiClient = axios.create({
@@ -68,21 +68,11 @@ function ChatApp(): JSX.Element {
 }
 
 // Add new interfaces for message reactions
-interface MessageReaction {
-  count: number;
-  reacted: boolean;
-}
-
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: Date
-  // Add reactions tracking
-  reactions?: {
-    likes?: MessageReaction;
-    dislikes?: MessageReaction;
-  }
 }
 
 interface ChatSession {
@@ -220,7 +210,7 @@ const ModelDropdown = ({
 };
 
 // Add new component for message action buttons
-const MessageActions = ({ message, onCopy, onRefresh, onLike, onDislike, onShare }) => {
+const MessageActions = ({ message, onCopy, onRefresh }) => {
   return (
     <div className="flex items-center gap-2 mt-1">
       <button onClick={() => onCopy(message.content)} className="p-1 text-gray-500 hover:text-gray-700" title="Copy to clipboard">
@@ -234,35 +224,33 @@ const MessageActions = ({ message, onCopy, onRefresh, onLike, onDislike, onShare
           <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path>
         </svg>
       </button>
-      <button 
-        onClick={() => onLike(message.id)} 
-        className={`p-1 ${message.reactions?.likes?.reacted ? 'text-blue-500' : 'text-gray-500 hover:text-gray-700'}`}
-        title="Like"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
-        </svg>
-      </button>
-      <button 
-        onClick={() => onDislike(message.id)} 
-        className={`p-1 ${message.reactions?.dislikes?.reacted ? 'text-red-500' : 'text-gray-500 hover:text-gray-700'}`}
-        title="Dislike"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm10-13h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path>
-        </svg>
-      </button>
-      <button onClick={() => onShare(message.id)} className="p-1 text-gray-500 hover:text-gray-700" title="Share">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="18" cy="5" r="3"></circle>
-          <circle cx="6" cy="12" r="3"></circle>
-          <circle cx="18" cy="19" r="3"></circle>
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-        </svg>
-      </button>
     </div>
   );
+};
+
+// Add this function for providing copy feedback
+const copyToClipboardWithFeedback = (content: string, element: HTMLButtonElement) => {
+  navigator.clipboard.writeText(content)
+    .then(() => {
+      // Show feedback that copy succeeded
+      const originalText = element.textContent;
+      element.textContent = 'Copied!';
+      element.classList.add('copied');
+      
+      // Reset after a short delay
+      setTimeout(() => {
+        element.textContent = originalText;
+        element.classList.remove('copied');
+      }, 2000);
+    })
+    .catch(err => {
+      console.error('Failed to copy:', err);
+      // Show error feedback
+      element.textContent = 'Failed!';
+      setTimeout(() => {
+        element.textContent = 'Copy';
+      }, 2000);
+    });
 };
 
 function Chat(): JSX.Element {
@@ -401,10 +389,18 @@ function Chat(): JSX.Element {
     }
   }
 
-  // Add new state and handlers for message reactions
+  // Update the existing copyToClipboard function to handle notification
   const copyToClipboard = (content: string) => {
-    navigator.clipboard.writeText(content);
-    // You could add a toast notification here
+    navigator.clipboard.writeText(content)
+      .then(() => {
+        // You could add a toast notification here
+        // For now, let's add a simple console message
+        console.log('Content copied to clipboard');
+        // A visual feedback could be added here with a toast library
+      })
+      .catch(err => {
+        console.error('Failed to copy:', err);
+      });
   };
 
   const regenerateResponse = (messageId: string) => {
@@ -422,44 +418,6 @@ function Chat(): JSX.Element {
         message: userMessage.content,
         session_id: session.id
       });
-    }
-  };
-
-  const handleLike = (messageId: string) => {
-    setMessages(messages.map(msg => 
-      msg.id === messageId ? 
-      {
-        ...msg, 
-        reactions: {
-          ...msg.reactions,
-          likes: { count: (msg.reactions?.likes?.count || 0) + (msg.reactions?.likes?.reacted ? -1 : 1), reacted: !msg.reactions?.likes?.reacted },
-          dislikes: { ...msg.reactions?.dislikes, reacted: false } // Reset dislike if liked
-        }
-      } : msg
-    ));
-  };
-
-  const handleDislike = (messageId: string) => {
-    setMessages(messages.map(msg => 
-      msg.id === messageId ? 
-      {
-        ...msg, 
-        reactions: {
-          ...msg.reactions,
-          dislikes: { count: (msg.reactions?.dislikes?.count || 0) + (msg.reactions?.dislikes?.reacted ? -1 : 1), reacted: !msg.reactions?.dislikes?.reacted },
-          likes: { ...msg.reactions?.likes, reacted: false } // Reset like if disliked
-        }
-      } : msg
-    ));
-  };
-
-  const handleShare = (messageId: string) => {
-    // Share functionality would go here
-    // Could open a modal or copy a shareable link
-    const message = messages.find(m => m.id === messageId);
-    if (message) {
-      copyToClipboard(message.content);
-      // Show a toast notification
     }
   };
 
@@ -610,7 +568,7 @@ function Chat(): JSX.Element {
                             remarkPlugins={[remarkGfm]}
                             rehypePlugins={[rehypeHighlight]}
                             components={{
-                              // Customize code blocks
+                              // Enhance code blocks
                               code({node, inline, className, children, ...props}) {
                                 const match = /language-(\w+)/.exec(className || '')
                                 return !inline && match ? (
@@ -618,7 +576,10 @@ function Chat(): JSX.Element {
                                     <div className="code-block-header">
                                       <span>{match[1]}</span>
                                       <button 
-                                        onClick={() => copyToClipboard(String(children).replace(/\n$/, ''))}
+                                        onClick={(e) => {
+                                          const content = String(children).replace(/\n$/, '');
+                                          copyToClipboardWithFeedback(content, e.currentTarget);
+                                        }}
                                         className="code-copy-button"
                                       >
                                         Copy
@@ -658,9 +619,6 @@ function Chat(): JSX.Element {
                         message={message}
                         onCopy={copyToClipboard}
                         onRefresh={regenerateResponse}
-                        onLike={handleLike}
-                        onDislike={handleDislike}
-                        onShare={handleShare}
                       />
                     )}
                   </div>
