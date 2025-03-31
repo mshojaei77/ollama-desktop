@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { Input } from '../components/ui/input'
 import { Button } from '../components/ui/button'
-import { Search, PlusCircle, MessageSquare, Wrench, Database, Settings } from 'lucide-react'
+import { Search, PlusCircle, MessageSquare, Wrench, Database, Settings, Bot } from 'lucide-react'
+import ollamaLogo from '../assets/ollama.png'
 
 // This interface defines the structure for a chat session
 interface ChatSession {
@@ -36,7 +37,8 @@ const Sidebar: React.FC = () => {
       {/* Logo Section */}
       <div className="p-4 flex items-center">
         <div className="font-bold text-xl flex items-center">
-          <span className="mr-1">🦙</span>ollama
+          <img src={ollamaLogo} alt="Ollama Logo" className="w-6 h-6 mr-1" />
+          ollama desktop
         </div>
       </div>
 
@@ -87,11 +89,11 @@ const Sidebar: React.FC = () => {
       <div className="p-2 space-y-1 border-t border-gray-200">
         <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-gray-50">
           <Wrench className="h-4 w-4 mr-2 text-gray-500" />
-          <span className="text-sm text-gray-700">Tools</span>
+          <span className="text-sm text-gray-700">MCP Servers</span>
         </div>
         <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-gray-50">
-          <Database className="h-4 w-4 mr-2 text-gray-500" />
-          <span className="text-sm text-gray-700">Knowledge Bases</span>
+          <Bot className="h-4 w-4 mr-2 text-gray-500" />
+          <span className="text-sm text-gray-700">Agents</span>
         </div>
         <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-gray-50">
           <Settings className="h-4 w-4 mr-2 text-gray-500" />
