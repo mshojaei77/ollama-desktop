@@ -41,7 +41,7 @@ class BaseChatbot:
     
     def __init__(
         self,
-        model_name: str = "llama3.2",
+        model_name: str = "gemma3:4b",
         system_message: Optional[str] = None,
         verbose: bool = False,
     ):
@@ -86,7 +86,7 @@ class OllamaChatbot(BaseChatbot):
     
     def __init__(
         self,
-        model_name: str = "llama3.2",
+        model_name: str = "gemma3:4b",
         system_message: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.7,
@@ -197,14 +197,14 @@ class MCPClient:
         Initialize the MCP client
         
         Args:
-            model_name: Optional model name (defaults to OLLAMA_MODEL env var or "llama3.2")
+            model_name: Optional model name (defaults to OLLAMA_MODEL env var or "gemma3:4b")
         """
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self._streams_context = None
         self._session_context = None
         self.exit_stack = AsyncExitStack()
-        self.model = model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
+        self.model = model_name or os.getenv("OLLAMA_MODEL", "gemma3:4b")
         self.direct_mode = False  # Flag to indicate if we're in direct chat mode
         
         # Initialize chatbot
@@ -540,7 +540,7 @@ class OllamaMCPPackage:
     
     @staticmethod
     async def create_standalone_chatbot(
-        model_name: str = "llama3.2",
+        model_name: str = "gemma3:4b",
         system_message: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.7

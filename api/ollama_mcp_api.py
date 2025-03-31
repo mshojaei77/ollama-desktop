@@ -5,6 +5,9 @@ Ollama MCP API - Integration example with FastAPI
 import os
 import json
 import asyncio
+import webbrowser  # Add this import
+import threading
+import time
 from typing import Dict, List, Optional, Any, Union
 
 import uvicorn
@@ -18,7 +21,28 @@ import db  # Import our new database module
 app = FastAPI(
     title="Ollama MCP API",
     description="API for interacting with Ollama models and MCP tools",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs",              # Explicitly set Swagger UI endpoint (default)
+    redoc_url="/redoc",            # Also enable ReDoc (alternative docs)
+    openapi_url="/openapi.json",   # URL for the OpenAPI schema
+    openapi_tags=[
+        {
+            "name": "Chat",
+            "description": "Operations for working with standalone Ollama chatbots"
+        },
+        {
+            "name": "MCP",
+            "description": "Operations for working with MCP-enabled clients and tools"
+        },
+        {
+            "name": "Sessions",
+            "description": "Operations for managing sessions and retrieving chat history"
+        },
+        {
+            "name": "Models",
+            "description": "Operations for getting information about available models"
+        }
+    ]
 )
 
 # Global state for clients and chatbots
@@ -37,7 +61,7 @@ class ChatResponse(BaseModel):
     session_id: str
 
 class InitializeRequest(BaseModel):
-    model_name: str = "llama3.2"
+    model_name: str = "gemma3:4b"
     system_message: Optional[str] = None
     session_id: Optional[str] = None
     
@@ -52,7 +76,7 @@ class MCPServerConnectRequest(BaseModel):
     command: Optional[str] = None     # For STDIO
     args: Optional[List[str]] = None  # For STDIO
     session_id: Optional[str] = None
-    model_name: str = "llama3.2"
+    model_name: str = "gemma3:4b"
 
 class StatusResponse(BaseModel):
     status: str
@@ -85,9 +109,9 @@ async def cleanup_session(session_id: str):
 
 # ----- API Endpoints -----
 
-@app.get("/")
+@app.get("/", tags=["Status"])
 async def root():
-    """Root endpoint"""
+    """Root endpoint providing API status information"""
     return {
         "status": "ok",
         "service": "Ollama MCP API",
@@ -101,9 +125,15 @@ async def startup_event():
     db.migrate_database()
     app_logger.info("Database initialized and migrated")
 
-@app.post("/chat/initialize", response_model=InitializeResponse)
+@app.post("/chat/initialize", response_model=InitializeResponse, tags=["Chat"])
 async def initialize_chatbot(request: InitializeRequest):
-    """Initialize a standalone Ollama chatbot"""
+    """
+    Initialize a standalone Ollama chatbot
+    
+    - Creates a new chatbot with the specified model
+    - Returns a session ID for subsequent interactions
+    - Optionally accepts a system message to customize the chatbot's behavior
+    """
     try:
         # Validate model name is not empty
         if not request.model_name or request.model_name.strip() == "":
@@ -152,9 +182,15 @@ async def initialize_chatbot(request: InitializeRequest):
         # Handle other unexpected errors as 500
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/chat/message", response_model=ChatResponse)
+@app.post("/chat/message", response_model=ChatResponse, tags=["Chat"])
 async def chat_message(request: ChatRequest):
-    """Send a message to a chatbot"""
+    """
+    Send a message to a chatbot
+    
+    - Requires a valid session_id from a previous /chat/initialize call
+    - Returns the model's response to the user message
+    - Saves the conversation history to the database
+    """
     if request.session_id not in active_chatbots:
         raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
     
@@ -181,9 +217,15 @@ async def chat_message(request: ChatRequest):
         app_logger.error(f"Error processing chat message: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
 
-@app.post("/mcp/connect", response_model=InitializeResponse)
+@app.post("/mcp/connect", response_model=InitializeResponse, tags=["MCP"])
 async def connect_to_mcp(request: MCPServerConnectRequest):
-    """Connect to an MCP server"""
+    """
+    Connect to an MCP server
+    
+    - Supports both SSE and STDIO server types
+    - Creates a new MCP client with the specified model
+    - Returns a session ID for subsequent interactions
+    """
     try:
         session_id = request.session_id or generate_session_id()
         
@@ -276,9 +318,14 @@ async def process_direct_query(request: ChatRequest):
         app_logger.error(f"Error processing direct query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing direct query: {str(e)}")
 
-@app.get("/available-models")
+@app.get("/available-models", tags=["Models"])
 async def get_available_models():
-    """Get list of available Ollama models"""
+    """
+    Get list of available Ollama models
+    
+    - Returns all models currently available in the Ollama environment
+    - Does not require an active session
+    """
     try:
         models = await OllamaMCPPackage.get_available_models()
         return {"models": models}
@@ -319,9 +366,14 @@ async def delete_session(session_id: str, background_tasks: BackgroundTasks):
         message=f"Session {session_id} scheduled for cleanup"
     )
 
-@app.get("/sessions", response_model=StatusResponse)
+@app.get("/sessions", response_model=StatusResponse, tags=["Sessions"])
 async def get_sessions():
-    """Get active sessions"""
+    """
+    Get all active sessions
+    
+    - Returns a list of all active session IDs
+    - Includes both chatbot and MCP client sessions
+    """
     # Get active sessions from database
     db_sessions = await db.get_active_sessions()
     session_ids = [session["session_id"] for session in db_sessions]
@@ -412,7 +464,7 @@ async def example_standalone():
     """Example of using the package with standalone Ollama (no MCP)"""
     # Create a standalone chatbot
     chatbot = await OllamaMCPPackage.create_standalone_chatbot(
-        model_name="llama3.2",
+        model_name="gemma3:4b",
         system_message="You are a helpful assistant who speaks like a pirate.",
         temperature=0.8
     )
@@ -448,12 +500,19 @@ async def example_with_mcp():
 
 # ----- Main Function -----
 
+def open_browser():
+    """Open browser after a short delay to ensure server is up"""
+    time.sleep(1.5)  # Wait for server to start
+    webbrowser.open("http://localhost:8000/docs")
+
 def start_server():
-    """Start the FastAPI server"""
+    """Start the FastAPI server and open Swagger UI"""
+    # Start browser in a separate thread so it doesn't block the server
+    threading.Thread(target=open_browser).start()
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    # Example: Run the FastAPI server
+    # Start the FastAPI server with auto-opening browser
     start_server()    
     # Examples of programmatic usage are defined above
     # To run them directly:
