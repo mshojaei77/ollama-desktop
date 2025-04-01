@@ -93,6 +93,22 @@ class ChatHistoryResponse(BaseModel):
     history: List[ChatHistoryItem]
     count: int
 
+class ChatSession(BaseModel):
+    session_id: str
+    model_name: str
+    session_type: str
+    system_message: Optional[str] = None
+    created_at: str
+    last_active: str
+    is_active: bool
+    message_count: Optional[int] = 0
+    first_message_time: Optional[str] = None
+    last_message_time: Optional[str] = None
+
+class AvailableChatsResponse(BaseModel):
+    sessions: List[ChatSession]
+    count: int
+
 
 # ----- Helper Functions -----
 
@@ -432,6 +448,7 @@ async def get_chat_history(
         start_date=start_date,
         end_date=end_date
     )
+    print(f"Chat history: {history}")
     
     return ChatHistoryResponse(
         session_id=session_id,
@@ -499,6 +516,112 @@ async def get_models(sort_by: Optional[str] = None):
     except Exception as e:
         app_logger.error(f"Error getting models: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting models: {str(e)}")
+
+@app.get("/chats", response_model=AvailableChatsResponse, tags=["Sessions"])
+async def get_chats(
+    include_inactive: bool = False,
+    limit: int = 100,
+    offset: int = 0
+):
+    try:
+        db_sessions = await db.get_sessions_with_message_count(
+            include_inactive=include_inactive,
+            limit=limit,
+            offset=offset
+        )
+        
+        sessions = []
+        for session in db_sessions:
+            # Convert timestamp fields to strings if they're datetime objects
+            created_at = session["created_at"]
+            last_active = session["last_active"]
+            first_message_time = session.get("first_message_time")
+            last_message_time = session.get("last_message_time")
+            message_count = session.get("message_count", 0)
+
+            if message_count < 1:
+                continue
+
+            sessions.append(ChatSession(
+                session_id=session["session_id"],
+                model_name=session["model_name"],
+                session_type=session["session_type"],
+                system_message=session["system_message"],
+                created_at=created_at,
+                last_active=last_active,
+                is_active=session["is_active"],
+                message_count=message_count,
+                first_message_time=first_message_time,
+                last_message_time=last_message_time
+            ))
+        
+        return AvailableChatsResponse(
+            sessions=sessions,
+            count=len(sessions)
+        )
+    except Exception as e:
+        app_logger.error(f"Error getting chats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting chats: {str(e)}")
+
+@app.get("/chats/search", response_model=AvailableChatsResponse, tags=["Sessions"])
+async def search_chats(
+    q: str,
+    include_inactive: bool = False,
+    limit: int = 100,
+    offset: int = 0
+):
+    """
+    Search for chat sessions by keyword
+    
+    - Searches in message content, model names, and system messages
+    - Returns matching chat sessions with message counts and metadata
+    - Can include inactive sessions with the include_inactive parameter
+    - Supports pagination with limit and offset parameters
+    
+    Args:
+        q: Search query string
+        include_inactive: Whether to include inactive sessions (default: False)
+        limit: Maximum number of sessions to return (default: 100)
+        offset: Number of sessions to skip for pagination (default: 0)
+    """
+    try:
+        # Search for sessions in the database
+        db_sessions = await db.search_chats(
+            search_term=q,
+            include_inactive=include_inactive,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Convert to response model
+        sessions = []
+        for session in db_sessions:
+            # Convert timestamp fields to strings if they're datetime objects
+            created_at = session["created_at"]
+            last_active = session["last_active"]
+            first_message_time = session.get("first_message_time")
+            last_message_time = session.get("last_message_time")
+            
+            sessions.append(ChatSession(
+                session_id=session["session_id"],
+                model_name=session["model_name"],
+                session_type=session["session_type"],
+                system_message=session["system_message"],
+                created_at=created_at,
+                last_active=last_active,
+                is_active=session["is_active"],
+                message_count=session.get("message_count", 0),
+                first_message_time=first_message_time,
+                last_message_time=last_message_time
+            ))
+        
+        return AvailableChatsResponse(
+            sessions=sessions,
+            count=len(sessions)
+        )
+    except Exception as e:
+        app_logger.error(f"Error searching chats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error searching chats: {str(e)}")
 
 
 # ----- Programmatic API Examples -----

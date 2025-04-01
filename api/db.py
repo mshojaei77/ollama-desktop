@@ -254,6 +254,74 @@ async def get_active_sessions() -> List[Dict]:
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
+async def get_all_sessions(include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[Dict]:
+    """
+    Get all sessions from the database
+    
+    Args:
+        include_inactive: Whether to include inactive sessions
+        limit: Maximum number of sessions to return
+        offset: Number of sessions to skip (for pagination)
+    """
+    async with async_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Build the query based on whether to include inactive sessions
+        if include_inactive:
+            query = "SELECT * FROM sessions"
+        else:
+            query = "SELECT * FROM sessions WHERE is_active = TRUE"
+            
+        # Add order by most recent first and pagination
+        query += " ORDER BY last_active DESC LIMIT ? OFFSET ?"
+        
+        cursor.execute(query, (limit, offset))
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+async def get_sessions_with_message_count(
+    include_inactive: bool = True,
+    limit: int = 100,
+    offset: int = 0
+) -> List[Dict]:
+    """
+    Get all sessions with a count of messages in each session
+    
+    Args:
+        include_inactive: Whether to include inactive sessions
+        limit: Maximum number of sessions to return
+        offset: Number of sessions to skip (for pagination)
+    """
+    async with async_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Base query with message counts and time bounds
+        query = """
+            SELECT s.*, 
+                   COUNT(ch.id) as message_count,
+                   MIN(ch.timestamp) as first_message_time,
+                   MAX(ch.timestamp) as last_message_time
+            FROM sessions s
+            LEFT JOIN chat_history ch ON s.session_id = ch.session_id
+        """
+        
+        # Add filter for active/inactive if needed
+        params = []
+        if not include_inactive:
+            query += " WHERE s.is_active = TRUE"
+            
+        # Complete the query with grouping and ordering
+        query += """
+            GROUP BY s.session_id
+            ORDER BY s.last_active DESC
+            LIMIT ? OFFSET ?
+        """
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
 # ----- Chat history operations -----
 
 async def add_chat_message(session_id: str, role: str, message: str) -> None:
@@ -320,6 +388,58 @@ async def get_filtered_chat_history(
         
         # Add order and pagination
         query += " ORDER BY timestamp ASC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+async def search_chats(
+    search_term: str,
+    include_inactive: bool = True,
+    limit: int = 100,
+    offset: int = 0
+) -> List[Dict]:
+    """
+    Search for sessions with matching text in messages, model name, or system message
+    
+    Args:
+        search_term: Text to search for
+        include_inactive: Whether to include inactive sessions
+        limit: Maximum number of sessions to return
+        offset: Number of sessions to skip (for pagination)
+    """
+    async with async_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Base query with joins to find sessions with matching messages
+        query = """
+            SELECT DISTINCT s.*,
+                   COUNT(DISTINCT ch.id) as message_count,
+                   MIN(ch.timestamp) as first_message_time,
+                   MAX(ch.timestamp) as last_message_time
+            FROM sessions s
+            LEFT JOIN chat_history ch ON s.session_id = ch.session_id
+            WHERE (
+                ch.message LIKE ? 
+                OR s.model_name LIKE ? 
+                OR s.system_message LIKE ?
+            )
+        """
+        
+        search_pattern = f"%{search_term}%"
+        params = [search_pattern, search_pattern, search_pattern]
+        
+        # Add filter for active/inactive if needed
+        if not include_inactive:
+            query += " AND s.is_active = TRUE"
+            
+        # Complete the query with grouping and ordering
+        query += """
+            GROUP BY s.session_id
+            ORDER BY s.last_active DESC
+            LIMIT ? OFFSET ?
+        """
         params.extend([limit, offset])
         
         cursor.execute(query, params)

@@ -76,3 +76,5 @@ htmlcov/
 .egg-info/
 .eggs/
 *.egg
+
+*.db
