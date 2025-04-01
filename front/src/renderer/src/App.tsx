@@ -6,7 +6,7 @@ import { queryClient } from './fetch/queries'
 function App(): JSX.Element {
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="flex h-screen">
+      <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex-1">
           <Chat />

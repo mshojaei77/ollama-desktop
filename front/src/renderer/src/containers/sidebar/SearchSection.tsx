@@ -3,11 +3,15 @@ import { Search } from 'lucide-react'
 
 const SearchSection = ({
   searchQuery,
-  handleSearchChange
+  setSearchQuery
 }: {
   searchQuery: string
-  handleSearchChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  setSearchQuery: (searchQuery: string) => void
 }): JSX.Element => {
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    setSearchQuery(e.target.value)
+  }
+
   return (
     <div className="px-4 mb-2">
       <div className="relative">
