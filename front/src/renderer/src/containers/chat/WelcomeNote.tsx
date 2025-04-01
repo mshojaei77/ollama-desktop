@@ -2,6 +2,7 @@ import { Button } from '../../components/ui/button'
 import { ModelsDropdown } from '../../components/ModelsDropdown'
 import { useInitializeChat, useModels } from '@renderer/fetch/queries'
 import { useChatStore } from '@renderer/store/chatStore'
+import ollamaLogo from '../../assets/ollama.png'
 
 const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element => {
   const selectedModel = useChatStore((state) => state.selectedModel)
@@ -23,20 +24,20 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-6">
-      <div className="w-full max-w-md rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-8 shadow-sm">
+      <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <div className="flex justify-center mb-4">
             <img
-              src={new URL('../assets/ollama-logo.png', import.meta.url).href}
+              src={ollamaLogo}
               alt="Ollama Logo"
-              className="h-14 w-auto"
+              className="h-18 w-auto"
               onError={(e) => {
                 // Fallback if logo doesn't exist
                 e.currentTarget.style.display = 'none'
               }}
             />
           </div>
-          <h1 className="text-3xl font-bold mb-2">Welcome to Ollama Chat</h1>
+          <h1 className="text-4xl font-bold mb-2">Welcome to Ollama Chat</h1>
           <p className="text-[hsl(var(--muted-foreground))]">
             Chat with AI models running locally on your machine
           </p>
@@ -61,8 +62,10 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
           )}
 
           <div className="flex flex-col items-center space-y-3">
-            <label className="text-sm font-medium">Select a model to start chatting</label>
-            <div className="w-3/4 mx-auto">
+            <label className="text-sm text-[hsl(var(--muted-foreground))]">
+              Select a model to start chatting
+            </label>
+            <div className="w-full mx-auto">
               <ModelsDropdown
                 models={models}
                 selectedModel={selectedModel}

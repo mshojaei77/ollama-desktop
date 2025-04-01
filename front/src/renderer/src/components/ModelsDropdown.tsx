@@ -1,5 +1,6 @@
 import { ModelOption } from '../fetch/types'
 import { getIconPath, getModelDisplayName } from '@renderer/utils'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 export const ModelsDropdown = ({
   models,
@@ -22,26 +23,30 @@ export const ModelsDropdown = ({
   })
 
   return (
-    <div className="relative min-w-[150px] max-w-[300px]">
-      <select
-        className="w-full p-2 pl-10 border rounded-full bg-[hsl(var(--background))] border-[hsl(var(--input))] appearance-none cursor-pointer overflow-hidden text-ellipsis"
-        value={selectedModel}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={isLoading || disabled}
-        title={selectedModel}
-      >
-        {isLoading ? (
-          <option>Loading models...</option>
-        ) : formattedModels.length === 0 ? (
-          <option>No models available</option>
-        ) : (
-          formattedModels.map((model) => (
-            <option key={model.name} value={model.name} title={model.name}>
-              {getModelDisplayName(model.name)}
-            </option>
-          ))
-        )}
-      </select>
+    <div className="relative min-w-[150px] max-w-[300px] mx-auto">
+      <Select value={selectedModel} onValueChange={onChange} disabled={isLoading || disabled}>
+        <SelectTrigger className="w-full pl-10 rounded-xl ">
+          <SelectValue placeholder={isLoading ? 'Loading models...' : 'Select model'} />
+        </SelectTrigger>
+
+        <SelectContent className="max-h-60 overflow-y-auto min-w-[150px] max-w-[300px]">
+          {isLoading ? (
+            <SelectItem value="loading" disabled>
+              Loading models...
+            </SelectItem>
+          ) : formattedModels.length === 0 ? (
+            <SelectItem value="none" disabled>
+              No models available
+            </SelectItem>
+          ) : (
+            formattedModels.map((model) => (
+              <SelectItem key={model.name} value={model.name}>
+                {getModelDisplayName(model.name)}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
 
       {!isLoading && selectedModel && (
         <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none">
@@ -55,22 +60,6 @@ export const ModelsDropdown = ({
           />
         </div>
       )}
-
-      <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </div>
     </div>
   )
 }
