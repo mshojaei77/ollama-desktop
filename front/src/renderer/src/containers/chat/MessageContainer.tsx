@@ -71,7 +71,7 @@ const MessageContainer = (): JSX.Element => {
   }
 
   return (
-    <div className="flex-1 p-4 overflow-y-auto">
+    <div className="flex-1 p-4 overflow-y-auto px-20">
       {isLoadingHistory && (
         <div className="flex justify-center my-8">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>

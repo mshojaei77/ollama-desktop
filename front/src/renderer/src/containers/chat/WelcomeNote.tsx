@@ -76,24 +76,26 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
             </div>
           </div>
 
-          <Button
-            className="w-full py-6 text-base font-medium rounded-lg"
-            onClick={handleInitializeChat}
-            disabled={
-              isInitializing || isLoadingModels || models.length === 0 || apiConnected !== true
-            }
-          >
-            {isInitializing ? (
-              <>
-                <span className="animate-spin mr-2 h-4 w-4 border-2 border-current border-t-transparent rounded-full"></span>
-                Initializing...
-              </>
-            ) : (
-              'Start Chat'
-            )}
-          </Button>
+          <div className="min-w-[150px] max-w-[300px] mx-auto">
+            <Button
+              className="w-full py-5 text-base font-medium rounded-xl "
+              onClick={handleInitializeChat}
+              disabled={
+                isInitializing || isLoadingModels || models.length === 0 || apiConnected !== true
+              }
+            >
+              {isInitializing ? (
+                <>
+                  <span className="animate-spin mr-2 h-4 w-4 border-2 border-current border-t-transparent rounded-full"></span>
+                  Initializing...
+                </>
+              ) : (
+                'Start Chat'
+              )}
+            </Button>
+          </div>
 
-          <div className="mt-6 border-t pt-4 border-[hsl(var(--border))]">
+          <div className="mt-6 border-t pt-4 border-[hsl(var(--border))] px-7">
             <h3 className="text-sm font-medium mb-2">Tips:</h3>
             <ul className="text-xs text-[hsl(var(--muted-foreground))] space-y-1 list-disc pl-4">
               <li>Models run locally on your machine</li>
