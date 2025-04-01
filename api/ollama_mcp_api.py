@@ -8,10 +8,11 @@ import asyncio
 import webbrowser  # Add this import
 import threading
 import time
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
@@ -242,6 +243,63 @@ async def chat_message(request: ChatRequest):
     except Exception as e:
         app_logger.error(f"Error processing chat message: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
+
+@app.post("/chat/message/stream", tags=["Chat"])
+async def chat_message_stream(request: ChatRequest):
+    """
+    Send a message to a chatbot and stream the response using SSE
+    
+    - Requires a valid session_id from a previous /chat/initialize call
+    - Returns a streaming response from the model
+    - Saves the conversation history to the database once completed
+    """
+    if request.session_id not in active_chatbots:
+        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
+    
+    async def generate_stream() -> AsyncGenerator[str, None]:
+        """Generate streaming response from Ollama"""
+        try:
+            chatbot = active_chatbots[request.session_id]
+            
+            # Save user message to history
+            await db.add_chat_message(request.session_id, "user", request.message)
+            
+            # Set up variables to collect the full response
+            full_response = []
+            
+            # Use the chatbot's streaming method to get chunks directly from Ollama
+            async for chunk in chatbot.chat_stream(request.message):
+                if chunk is None:
+                    # This is the completion signal from chat_stream
+                    break
+                
+                # Add to the full response
+                full_response.append(chunk)
+                
+                # Send the chunk as an SSE event
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+            
+            # Combine the full response for logging (the message is already saved by chat_stream)
+            complete_response = ''.join(full_response)
+            app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
+            
+            # Update session activity
+            await db.update_session_activity(request.session_id)
+            
+            # Save assistant response to history
+            await db.add_chat_message(request.session_id, "assistant", complete_response)
+            
+            # Send completion signal
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            
+        except Exception as e:
+            app_logger.error(f"Error streaming chat message: {str(e)}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream"
+    )
 
 @app.post("/mcp/connect", response_model=InitializeResponse, tags=["MCP"])
 async def connect_to_mcp(request: MCPServerConnectRequest):

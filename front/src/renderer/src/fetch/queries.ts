@@ -48,10 +48,100 @@ const initializeChat = async (params: InitializeChatParams): Promise<InitializeC
   }
 }
 
-const sendMessage = async (params: SendMessageParams): Promise<SendMessageResponse> => {
+const createFetchStream = (
+  url: string,
+  body: object,
+  onChunk: (chunk: string) => void
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    let fullResponse = ''
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`)
+        }
+
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+
+        function processStream(): Promise<string> {
+          return reader.read().then(({ done, value }) => {
+            if (done) {
+              return fullResponse
+            }
+
+            const chunk = decoder.decode(value)
+
+            const lines = chunk.split('\n\n')
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const jsonStr = line.slice(6) // Remove 'data: ' prefix
+                  const data = JSON.parse(jsonStr)
+
+                  if (data.text) {
+                    fullResponse += data.text
+                    onChunk(data.text)
+                  }
+
+                  if (data.done) {
+                    reader.cancel()
+                    return fullResponse
+                  }
+
+                  if (data.error) {
+                    reader.cancel()
+                    throw new Error(data.error)
+                  }
+                } catch {
+                  // Ignore invalid JSON, might be partial chunks
+                }
+              }
+            }
+
+            return processStream()
+          })
+        }
+
+        return processStream()
+      })
+      .then((result) => resolve(result))
+      .catch((error) => {
+        console.error('Fetch streaming error:', error)
+        reject(error)
+      })
+  })
+}
+
+const sendMessage = async (
+  params: SendMessageParams,
+  onStreamUpdate?: (chunk: string) => void
+): Promise<SendMessageResponse> => {
   try {
-    const { data } = await apiClient.post<SendMessageResponse>('/chat/message', params)
-    return data
+    const url = `${apiClient.defaults.baseURL}/chat/message/stream`
+
+    const response = await createFetchStream(
+      url,
+      {
+        message: params.message,
+        session_id: params.session_id
+      },
+      (chunk) => {
+        if (onStreamUpdate) {
+          onStreamUpdate(chunk)
+        }
+      }
+    )
+
+    return { response }
   } catch (error) {
     console.error('Error sending message:', error)
     throw new Error('Failed to send message. Please try again.')
@@ -163,13 +253,14 @@ export const useSendMessage = (): UseMutationResult<
 > => {
   // Access Zustand store for adding messages
   const addMessage = useChatStore((state) => state.addMessage)
+  const updateMessage = useChatStore((state) => state.updateMessage)
 
   return useMutation({
-    mutationFn: sendMessage,
-    onMutate: (variables) => {
-      // Create a new user message for optimistic update
+    mutationFn: async (variables: SendMessageParams) => {
+      const userMessageId = Date.now().toString()
+
       const userMessage = {
-        id: Date.now().toString(),
+        id: userMessageId,
         role: 'user' as const,
         content: variables.message,
         timestamp: new Date()
@@ -177,17 +268,33 @@ export const useSendMessage = (): UseMutationResult<
 
       // Add user message to store
       addMessage(userMessage)
-    },
-    onSuccess: (data) => {
-      // Add assistant response to store
+
+      const assistantMessageId = (Date.now() + 1).toString()
       const assistantMessage = {
-        id: (Date.now() + 1).toString(),
+        id: assistantMessageId,
         role: 'assistant' as const,
-        content: data.response,
+        content: '', // Start with empty content that will be updated during streaming
         timestamp: new Date()
       }
 
       addMessage(assistantMessage)
+
+      try {
+        // Only one API call that handles both streaming updates and returns the final response
+        return await sendMessage(variables, (chunk) => {
+          // Update message in the UI as chunks come in
+          updateMessage(assistantMessageId, (content) => content + chunk)
+        })
+      } catch (error) {
+        // Handle any errors during streaming
+        console.error('Streaming error:', error)
+        updateMessage(
+          assistantMessageId,
+          (content) =>
+            content + `\n\nError: ${error instanceof Error ? error.message : String(error)}`
+        )
+        throw error // Re-throw to let React Query handle the error state
+      }
     }
   })
 }

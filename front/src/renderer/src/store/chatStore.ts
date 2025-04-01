@@ -19,19 +19,18 @@ interface ChatState {
   setSessionActive: (active: boolean) => void
   setMessages: (messages: Message[]) => void
   addMessage: (message: Message) => void
+  updateMessage: (id: string, contentUpdater: (prevContent: string) => string) => void
   clearMessages: () => void
   setSelectedModel: (model: string) => void
 }
 
 export const useChatStore = create<ChatState>((set) => ({
-  // Initial state
   sessionId: null,
   modelName: '',
   isSessionActive: false,
   messages: [],
   selectedModel: 'llama3.2',
 
-  // Actions
   setSessionId: (sessionId: string | null): void => set({ sessionId }),
   setModelName: (modelName: string): void => set({ modelName }),
   setSessionActive: (active: boolean): void => set({ isSessionActive: active }),
@@ -39,6 +38,12 @@ export const useChatStore = create<ChatState>((set) => ({
   addMessage: (message: Message): void =>
     set((state) => ({
       messages: [...state.messages, message]
+    })),
+  updateMessage: (id: string, contentUpdater: (prevContent: string) => string): void =>
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === id ? { ...message, content: contentUpdater(message.content) } : message
+      )
     })),
   clearMessages: (): void => set({ messages: [] }),
   setSelectedModel: (model: string): void => set({ selectedModel: model })
