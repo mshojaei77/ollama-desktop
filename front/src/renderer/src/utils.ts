@@ -61,3 +61,14 @@ export const copyToClipboardWithFeedback = (content: string, element: HTMLButton
       }, 2000)
     })
 }
+
+export const copyToClipboard = (content: string): void => {
+  navigator.clipboard
+    .writeText(content)
+    .then(() => {
+      console.log('Content copied to clipboard')
+    })
+    .catch((err) => {
+      console.error('Failed to copy:', err)
+    })
+}
