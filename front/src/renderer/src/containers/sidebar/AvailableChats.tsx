@@ -3,6 +3,8 @@ import { APIChat, DisplayedChatSession } from '@renderer/fetch/types'
 import { useChatStore } from '@renderer/store/chatStore'
 import { useAvailableChats, useSearchChats } from '@renderer/fetch/queries'
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Routes } from '@renderer/lib/routes'
 
 const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element => {
   const [paginationState] = useState({
@@ -15,6 +17,7 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
   const setSessionId = useChatStore((state) => state.setSessionId)
   const setModelName = useChatStore((state) => state.setModelName)
   const setSessionActive = useChatStore((state) => state.setSessionActive)
+  const navigate = useNavigate()
 
   useEffect(() => {
     if (sessionId) {
@@ -81,6 +84,7 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
       setSessionId(apiChat.session_id)
       setModelName(apiChat.model_name)
       setSessionActive(true)
+      navigate(Routes.HOME)
     }
   }
 

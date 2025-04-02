@@ -3,10 +3,14 @@ import { ModelsDropdown } from '../../components/ModelsDropdown'
 import { useInitializeChat, useModels } from '@renderer/fetch/queries'
 import { useChatStore } from '@renderer/store/chatStore'
 import ollamaLogo from '../../assets/ollama.png'
+import { useNavigate } from 'react-router-dom'
+import { Routes } from '@renderer/lib/routes'
 
 const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element => {
   const selectedModel = useChatStore((state) => state.selectedModel)
   const setSelectedModel = useChatStore((state) => state.setSelectedModel)
+  const navigate = useNavigate()
+
   const {
     data: models = [],
     isLoading: isLoadingModels,
@@ -16,10 +20,17 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
   const { mutate: initializeChat, isPending: isInitializing } = useInitializeChat()
 
   const handleInitializeChat = (): void => {
-    initializeChat({
-      model_name: selectedModel,
-      system_message: 'You are a helpful assistant.'
-    })
+    initializeChat(
+      {
+        model_name: selectedModel,
+        system_message: 'You are a helpful assistant.'
+      },
+      {
+        onSuccess: () => {
+          navigate(Routes.HOME)
+        }
+      }
+    )
   }
 
   return (

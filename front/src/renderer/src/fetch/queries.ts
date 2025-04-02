@@ -13,7 +13,8 @@ import {
   SendMessageResponse,
   ModelsResponse,
   ChatHistoryResponse,
-  AvailableChatsResponse
+  AvailableChatsResponse,
+  MCPServersResponse
 } from './types'
 import { useChatStore } from '../store/chatStore'
 
@@ -337,5 +338,22 @@ export const useSearchChats = (
     queryKey: ['searchChats', query, includeInactive, limit, offset],
     queryFn: () => searchChats(query, includeInactive, limit, offset),
     enabled: !!query && query.trim().length > 0
+  })
+}
+
+const fetchMCPServers = async (): Promise<MCPServersResponse> => {
+  try {
+    const { data } = await apiClient.get<MCPServersResponse>('/mcp/servers')
+    return data
+  } catch (error) {
+    console.error('Error fetching MCP servers:', error)
+    throw new Error('Failed to fetch MCP servers. Please try again.')
+  }
+}
+
+export const useMCPServers = (): UseQueryResult<MCPServersResponse, Error> => {
+  return useQuery({
+    queryKey: ['mcpServers'],
+    queryFn: fetchMCPServers
   })
 }
