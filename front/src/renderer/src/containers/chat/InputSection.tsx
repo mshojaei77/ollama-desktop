@@ -5,6 +5,7 @@ import { useModels, useSendMessage } from '@renderer/fetch/queries'
 import { useState } from 'react'
 const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element => {
   const [input, setInput] = useState('')
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const sessionId = useChatStore((state) => state.sessionId)
   const selectedModel = useChatStore((state) => state.selectedModel)
   const setSelectedModel = useChatStore((state) => state.setSelectedModel)
@@ -26,9 +27,15 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
 
     sendMessageMutation({
       message: input,
-      session_id: sessionId
+      session_id: sessionId,
+      web_search: webSearchEnabled
     })
   }
+
+  const toggleWebSearch = (): void => {
+    setWebSearchEnabled(!webSearchEnabled)
+  }
+
   return (
     <div className="sticky bottom-0 p-4 border-t bg-[hsl(var(--background))] border-[hsl(var(--border))]">
       <div className="flex justify-between max-w-4xl mx-auto relative">
@@ -43,11 +50,17 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
               className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-0"
             />
             <div className="flex items-center gap-2 ml-2">
-              <div className="flex items-center gap-1 text-sm border rounded-full px-2 py-1 bg-gray-100">
+              <button
+                onClick={toggleWebSearch}
+                className={`flex items-center justify-center w-8 h-8 text-sm border rounded-full transition-colors ${
+                  webSearchEnabled ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-gray-100 text-gray-700 border-gray-200'
+                }`}
+                title={webSearchEnabled ? "Web search enabled - AI will search the internet for answers" : "Web search disabled - AI will use only its knowledge"}
+              >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  width="12"
-                  height="12"
+                  width="16"
+                  height="16"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -55,11 +68,11 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 >
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="2" y1="12" x2="22" y2="12"></line>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
                 </svg>
-                <span>auto</span>
-              </div>
+              </button>
 
               <div className="relative">
                 <ModelsDropdown
