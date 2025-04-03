@@ -99,5 +99,7 @@ export interface MCPServer {
 export interface NewServerForm {
   name: string
   command: string
-  type: string
+  type: string  // Only "stdio" or "sse" are valid values
+  args: string
+  serverUrl: string
 }

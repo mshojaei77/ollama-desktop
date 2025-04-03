@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
 import db  # Import our new database module
+from config_io import read_ollama_config, write_ollama_config
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -109,6 +110,13 @@ class ChatSession(BaseModel):
 class AvailableChatsResponse(BaseModel):
     sessions: List[ChatSession]
     count: int
+
+class MCPServerAddRequest(BaseModel):
+    server_name: str
+    server_type: str = "stdio"  # "sse" or "stdio"
+    command: Optional[str] = None  # For STDIO
+    args: Optional[List[str]] = None  # For STDIO
+    server_url: Optional[str] = None  # For SSE
 
 
 # ----- Helper Functions -----
@@ -435,6 +443,90 @@ async def get_mcp_servers():
     except Exception as e:
         app_logger.error(f"Error getting MCP servers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting MCP servers: {str(e)}")
+
+@app.post("/mcp/servers/add", tags=["MCP"])
+async def add_mcp_server(request: MCPServerAddRequest):
+    """
+    Add a new MCP server configuration
+    
+    - Adds a new server to the ollama_desktop_config.json file
+    - Supports both SSE and STDIO server types
+    - Returns updated list of configured servers
+    
+    Args:
+        request: Server configuration details
+    """
+    try:
+        # Validate the request based on server_type
+        if request.server_type == "sse":
+            if not request.server_url:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="server_url is required for SSE server type"
+                )
+        elif request.server_type == "stdio":
+            if not request.command:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="command is required for STDIO server type"
+                )
+            if not request.args or not isinstance(request.args, list):
+                raise HTTPException(
+                    status_code=400, 
+                    detail="args must be a non-empty list for STDIO server type"
+                )
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported server type: {request.server_type}. Must be 'sse' or 'stdio'."
+            )
+        
+        # Load current configuration
+        config = await OllamaMCPPackage.load_mcp_config()
+        
+        if not config:
+            config = {"mcpServers": {}}
+        elif "mcpServers" not in config:
+            config["mcpServers"] = {}
+            
+        # Check if server name already exists
+        if request.server_name in config["mcpServers"]:
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Server with name '{request.server_name}' already exists"
+            )
+            
+        # Add new server configuration based on type
+        if request.server_type == "sse":
+            config["mcpServers"][request.server_name] = {
+                "type": "sse",
+                "url": request.server_url
+            }
+        else:  # stdio
+            config["mcpServers"][request.server_name] = {
+                "type": "stdio",
+                "command": request.command,
+                "args": request.args
+            }
+            
+        # Write updated configuration
+        success = await write_ollama_config(config)
+        
+        if not success:
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to write configuration file"
+            )
+            
+        # Return updated list of servers
+        return {"servers": config["mcpServers"], "message": f"Server '{request.server_name}' added successfully"}
+        
+    except HTTPException as http_exc:
+        # Re-raise HTTPExceptions directly
+        raise http_exc
+    except Exception as e:
+        app_logger.error(f"Error adding MCP server: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error adding MCP server: {str(e)}")
 
 @app.delete("/sessions/{session_id}", response_model=StatusResponse)
 async def delete_session(session_id: str, background_tasks: BackgroundTasks):

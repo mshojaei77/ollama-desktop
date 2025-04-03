@@ -44,6 +44,10 @@ def mock_db():
         mock_db.deactivate_session = AsyncMock()
         mock_db.get_active_sessions = AsyncMock(return_value=[{"session_id": "test-session-1"}])
         mock_db.get_session = AsyncMock(return_value={"session_id": "test-session-1"})
+        mock_db.get_filtered_chat_history = AsyncMock(return_value=[
+            {"role": "user", "message": "Hello", "timestamp": "2023-01-01T00:00:00"},
+            {"role": "assistant", "message": "Hi there!", "timestamp": "2023-01-01T00:00:01"}
+        ])
         mock_db.get_chat_history = AsyncMock(return_value=[
             {"role": "user", "content": "Hello", "timestamp": "2023-01-01T00:00:00"},
             {"role": "assistant", "content": "Hi there!", "timestamp": "2023-01-01T00:00:01"}
@@ -54,6 +58,35 @@ def mock_db():
         mock_db.get_models = AsyncMock(return_value=[
             {"name": "gemma3:4b", "last_used": "2023-01-01T00:00:00"},
             {"name": "gemma", "last_used": "2023-01-01T00:00:01"}
+        ])
+        mock_db.ensure_model_exists = AsyncMock()
+        mock_db.get_sessions_with_message_count = AsyncMock(return_value=[
+            {
+                "session_id": "test-session-1",
+                "model_name": "gemma3:4b",
+                "session_type": "chatbot",
+                "system_message": "You are a helpful assistant",
+                "created_at": "2023-01-01T00:00:00",
+                "last_active": "2023-01-01T00:00:02",
+                "is_active": True,
+                "message_count": 2,
+                "first_message_time": "2023-01-01T00:00:00",
+                "last_message_time": "2023-01-01T00:00:01"
+            }
+        ])
+        mock_db.search_chats = AsyncMock(return_value=[
+            {
+                "session_id": "test-session-1",
+                "model_name": "gemma3:4b",
+                "session_type": "chatbot",
+                "system_message": "You are a helpful assistant",
+                "created_at": "2023-01-01T00:00:00",
+                "last_active": "2023-01-01T00:00:02",
+                "is_active": True,
+                "message_count": 2,
+                "first_message_time": "2023-01-01T00:00:00",
+                "last_message_time": "2023-01-01T00:00:01"
+            }
         ])
         yield mock_db
 
@@ -71,6 +104,7 @@ def mock_ollama_mcp_package():
                 "server2": {"type": "stdio", "command": "python", "args": ["server.py"]}
             }
         })
+        mock_package.save_mcp_config = AsyncMock(return_value=True)
         yield mock_package
 
 # Clear global state between tests
@@ -328,5 +362,95 @@ def test_get_models_with_sort(mock_db):
     assert "models" in data
     assert len(data["models"]) == 2
 
+def test_add_mcp_server(mock_ollama_mcp_package):
+    """Test adding a new MCP server."""
+    # Mock the write_ollama_config function
+    with patch("ollama_mcp_api.write_ollama_config", AsyncMock(return_value=True)):
+        # Test adding an SSE server
+        response = client.post("/mcp/servers/add", json={
+            "server_name": "test_server",
+            "server_type": "sse",
+            "server_url": "http://localhost:8080/sse"
+        })
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "servers" in data
+        assert "message" in data
+        assert "test_server" in data["message"]
+        
+        # Verify the mocks were called correctly
+        mock_ollama_mcp_package.load_mcp_config.assert_called()
+        
+        # Test adding an STDIO server
+        response = client.post("/mcp/servers/add", json={
+            "server_name": "stdio_server",
+            "server_type": "stdio",
+            "command": "python",
+            "args": ["mcp_server.py"]
+        })
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "servers" in data
+        assert "message" in data
+        assert "stdio_server" in data["message"]
+
+def test_add_mcp_server_validation(mock_ollama_mcp_package):
+    """Test validation for adding MCP servers."""
+    # Test missing server_name (this should be a validation error)
+    response = client.post("/mcp/servers/add", json={
+        "server_type": "sse",
+        "server_url": "http://localhost:8080/sse"
+    })
+    assert response.status_code == 422  # Validation error
+    
+    # Test invalid server_type
+    with patch("ollama_mcp_api.write_ollama_config", AsyncMock(return_value=True)):
+        response = client.post("/mcp/servers/add", json={
+            "server_name": "invalid_server",
+            "server_type": "invalid",
+            "server_url": "http://localhost:8080/sse"
+        })
+        assert response.status_code == 400
+        assert "Unsupported server type" in response.json()["detail"]
+        
+        # Test missing server_url for SSE type
+        response = client.post("/mcp/servers/add", json={
+            "server_name": "missing_url",
+            "server_type": "sse"
+        })
+        assert response.status_code == 400
+        assert "server_url is required" in response.json()["detail"]
+        
+        # Test missing command for STDIO type
+        response = client.post("/mcp/servers/add", json={
+            "server_name": "missing_command",
+            "server_type": "stdio"
+        })
+        assert response.status_code == 400
+        assert "command is required" in response.json()["detail"]
+
+def test_get_chats(mock_db):
+    """Test getting all chats."""
+    response = client.get("/chats")
+    assert response.status_code == 200
+    data = response.json()
+    assert "sessions" in data
+    assert "count" in data
+    assert data["count"] == 1
+    assert data["sessions"][0]["session_id"] == "test-session-1"
+    assert data["sessions"][0]["model_name"] == "gemma3:4b"
+
+def test_search_chats(mock_db):
+    """Test searching for chats."""
+    response = client.get("/chats/search?q=test")
+    assert response.status_code == 200
+    data = response.json()
+    assert "sessions" in data
+    assert "count" in data
+    assert data["count"] == 1
+    assert data["sessions"][0]["session_id"] == "test-session-1"
+
 if __name__ == "__main__":
-    pytest.main(["-v", "unit_test.py"])
+    pytest.main(["-v", "api/unit_test.py"])
