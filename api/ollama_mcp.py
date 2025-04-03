@@ -33,6 +33,7 @@ import anyio
 
 # Import the logger
 from logger import app_logger
+from .config_io import read_ollama_config
 
 load_dotenv()  # load environment variables from .env
 
@@ -679,3 +680,23 @@ class OllamaMCPPackage:
         except Exception as e:
             app_logger.error(f"Error loading configuration: {str(e)}")
             return {"mcpServers": {}}
+
+    @staticmethod
+    async def get_mcp_server_config(server_name):
+        """Get MCP server configuration by name"""
+        if not server_name:
+            return None
+        
+        try:
+            config = await read_ollama_config()
+            if not config or "mcpServers" not in config:
+                app_logger.warning("MCP servers configuration not found or empty.")
+                return None
+            
+            server_conf = config["mcpServers"].get(server_name)
+            if not server_conf:
+                app_logger.warning(f"Configuration for MCP server '{server_name}' not found.")
+            return server_conf
+        except Exception as e:
+            app_logger.error(f"Error getting MCP server config for '{server_name}': {str(e)}")
+            return None

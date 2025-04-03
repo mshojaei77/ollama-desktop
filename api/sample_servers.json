@@ -1,0 +1,104 @@
+{
+  "mcpServers": {
+    "calculator": {
+      "command": "uvx",
+      "args": ["mcp-server-calculator"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/username/Desktop",
+        "/path/to/other/allowed/dir"
+      ]
+    },
+    "everart": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everart"],
+      "env": {
+        "EVERART_API_KEY": "your_key_here"
+      }
+    },
+    "google-maps": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-google-maps"
+      ],
+      "env": {
+        "GOOGLE_MAPS_API_KEY": "<YOUR_API_KEY>"
+      }
+    },
+    "Crawl4AI": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/PARENT/FOLDER/crawl4ai-mcp",
+        "run",
+        "main.py"
+      ]
+    },
+    "sqlite": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "parent_of_servers_repo/servers/src/sqlite",
+        "run",
+        "mcp-server-sqlite",
+        "--db-path",
+        "~/test.db"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "blender": {
+      "command": "uvx",
+      "args": [
+        "blender-mcp"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@executeautomation/playwright-mcp-server"]
+    },
+    "ppt": {
+      "command": "uvx",
+      "args": [
+        "--from", "office-powerpoint-mcp-server", "ppt_mcp_server"
+      ],
+      "env": {}
+    },
+    "word-document-server": {
+      "command": "uvx",
+      "args": [
+        "--from", "office-word-mcp-server", "word_mcp_server"
+      ]
+    },
+    "image-gen": {
+      "command": "npx",
+      "args": ["@gongrzhe/image-gen-server"],
+      "env": {
+        "REPLICATE_API_TOKEN": "your-replicate-api-token",
+        "MODEL": "alternative-model-name"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

@@ -444,7 +444,7 @@ async def get_mcp_servers():
         app_logger.error(f"Error getting MCP servers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting MCP servers: {str(e)}")
 
-@app.post("/mcp/servers/add", tags=["MCP"])
+@app.post("/mcp/servers", tags=["MCP"])
 async def add_mcp_server(request: MCPServerAddRequest):
     """
     Add a new MCP server configuration
@@ -781,6 +781,118 @@ async def search_chats(
     except Exception as e:
         app_logger.error(f"Error searching chats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error searching chats: {str(e)}")
+
+@app.get("/mcp/servers/active", tags=["MCP"])
+async def get_active_mcp_servers():
+    """Get list of active MCP servers"""
+    try:
+        # Get list of active servers from database
+        active_servers = await db.get_active_mcp_servers()
+        return {"active_servers": active_servers}
+    except Exception as e:
+        app_logger.error(f"Error getting active MCP servers: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting active MCP servers: {str(e)}")
+
+@app.post("/mcp/servers/toggle-active/{server_name}", tags=["MCP"])
+async def toggle_mcp_server_active(server_name: str, active: bool):
+    """Activate or deactivate an MCP server"""
+    try:
+        # Update server active status in database
+        success = await db.set_mcp_server_active(server_name, active)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Server {server_name} not found")
+        
+        # Get updated list of active servers
+        active_servers = await db.get_active_mcp_servers()
+        return {"active": active, "server_name": server_name, "active_servers": active_servers}
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        app_logger.error(f"Error toggling MCP server active status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error toggling MCP server active status: {str(e)}")
+
+@app.post("/chat/initialize-with-mcp", response_model=InitializeResponse, tags=["Chat"])
+async def initialize_chat_with_mcp(request: InitializeRequest):
+    """
+    Initialize a chat with active MCP servers if available, otherwise create a regular chat
+    
+    - Checks for active MCP servers
+    - If active servers exist, creates a chat with MCP integration
+    - If no active servers, falls back to regular chat
+    """
+    try:
+        # Validate model name is not empty
+        if not request.model_name or request.model_name.strip() == "":
+            raise HTTPException(status_code=400, detail="Model name cannot be empty")
+        
+        session_id = request.session_id or generate_session_id()
+        
+        # Clean up existing session if it exists
+        if session_id in active_chatbots or session_id in active_clients:
+            await cleanup_session(session_id)
+        
+        # Get active MCP servers
+        active_servers = await db.get_active_mcp_servers()
+        
+        # If there are active MCP servers, use them
+        if active_servers:
+            app_logger.info(f"Initializing chat with active MCP servers: {active_servers}")
+            
+            # Get the first active server config for now (in future could support multiple)
+            server_config = await OllamaMCPPackage.get_mcp_server_config(active_servers[0])
+            
+            if not server_config:
+                app_logger.warning(f"No config found for active server {active_servers[0]}, falling back to regular chat")
+                return await initialize_chatbot(request)
+            
+            # Create MCP client
+            client = await OllamaMCPPackage.create_client(model_name=request.model_name)
+            
+            # Connect to server based on type
+            server_type = server_config.get('type', 'stdio')
+            
+            if server_type == "sse":
+                server_url = server_config.get('url')
+                if not server_url:
+                    raise HTTPException(status_code=400, detail="Server URL not found in config")
+                
+                await client.connect_to_sse_server(server_url=server_url)
+            
+            elif server_type == "stdio":
+                command = server_config.get('command')
+                args = server_config.get('args', [])
+                
+                if not command:
+                    raise HTTPException(status_code=400, detail="Command not found in config")
+                
+                await client.connect_to_stdio_server(command=command, args=args)
+            
+            # Store in active clients
+            active_clients[session_id] = client
+            
+            # Save to database
+            await db.create_session(
+                session_id=session_id,
+                model_name=request.model_name,
+                session_type="mcp_client",
+                system_message=request.system_message
+            )
+            
+            return InitializeResponse(
+                session_id=session_id,
+                status="connected_with_mcp",
+                model=request.model_name
+            )
+        else:
+            # No active MCP servers, fall back to regular chat
+            app_logger.info("No active MCP servers, initializing regular chat")
+            return await initialize_chatbot(request)
+            
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        app_logger.error(f"Error initializing chat with MCP: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 # ----- Programmatic API Examples -----

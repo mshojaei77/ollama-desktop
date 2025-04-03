@@ -351,14 +351,14 @@ const NewServerDialog = ({
             <Button 
               variant={!isJsonMode ? "default" : "outline"}
               onClick={() => setIsJsonMode(false)}
-              className={!isJsonMode ? "bg-gray-200" : "bg-white"}
+              className={!isJsonMode ? "bg-blue-500 text-white hover:bg-blue-600" : "bg-white hover:bg-gray-100"}
             >
               Form
             </Button>
             <Button 
               variant={isJsonMode ? "default" : "outline"}
               onClick={() => setIsJsonMode(true)}
-              className={isJsonMode ? "bg-gray-200" : "bg-white"}
+              className={isJsonMode ? "bg-blue-500 text-white hover:bg-blue-600" : "bg-white hover:bg-gray-100"}
             >
               JSON
             </Button>

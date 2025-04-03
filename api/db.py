@@ -9,6 +9,9 @@ import sqlite3
 import datetime
 from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
+import logging
+from .config_io import read_ollama_config
+from .ollama_mcp_api import app_logger
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ollama_mcp.db")
@@ -53,6 +56,13 @@ CREATE TABLE IF NOT EXISTS chat_history (
     message TEXT NOT NULL,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+
+-- MCP server status table
+CREATE TABLE IF NOT EXISTS mcp_server_status (
+    server_name TEXT PRIMARY KEY,
+    is_active BOOLEAN DEFAULT 0,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -480,6 +490,90 @@ def migrate_database():
         print(f"Error during database migration: {str(e)}")
     finally:
         conn.close()
+
+# Add these functions to the database module
+
+async def get_active_mcp_servers():
+    """Get list of active MCP server names"""
+    conn = await get_db_connection()
+    try:
+        # Check if table exists
+        table_exists = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
+        )
+        if not await table_exists.fetchone():
+            # Create table if it doesn't exist
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS mcp_server_status (
+                    server_name TEXT PRIMARY KEY,
+                    is_active BOOLEAN DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            await conn.commit()
+            return []
+        
+        # Get active servers
+        cursor = await conn.execute(
+            "SELECT server_name FROM mcp_server_status WHERE is_active = 1"
+        )
+        active_servers = [row[0] for row in await cursor.fetchall()]
+        return active_servers
+    finally:
+        await conn.close()
+
+async def set_mcp_server_active(server_name, is_active):
+    """Set MCP server active status"""
+    if not server_name:
+        return False
+    
+    conn = await get_db_connection()
+    try:
+        # Check if table exists
+        table_exists = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
+        )
+        if not await table_exists.fetchone():
+            # Create table if it doesn't exist
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS mcp_server_status (
+                    server_name TEXT PRIMARY KEY,
+                    is_active BOOLEAN DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+        
+        # Update or insert server status
+        await conn.execute(
+            """
+            INSERT INTO mcp_server_status (server_name, is_active, last_updated)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(server_name) DO UPDATE SET
+                is_active = ?,
+                last_updated = CURRENT_TIMESTAMP
+            """,
+            (server_name, 1 if is_active else 0, 1 if is_active else 0)
+        )
+        await conn.commit()
+        return True
+    finally:
+        await conn.close()
+
+# Add a method to OllamaMCPPackage to get server config by name
+async def get_mcp_server_config(server_name):
+    """Get MCP server configuration by name"""
+    if not server_name:
+        return None
+    
+    try:
+        config = await read_ollama_config()
+        if not config or "mcpServers" not in config:
+            return None
+        
+        return config["mcpServers"].get(server_name)
+    except Exception as e:
+        app_logger.error(f"Error getting MCP server config: {str(e)}")
+        return None
 
 if __name__ == "__main__":
     print("Initializing database...")
