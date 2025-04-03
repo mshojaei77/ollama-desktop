@@ -151,6 +151,15 @@ async def startup_event():
     db.init_db()
     db.migrate_database()
     app_logger.info("Database initialized and migrated")
+    
+    # Start Ollama on Windows platforms
+    import sys
+    import subprocess
+    if sys.platform.startswith('win'):
+        try:
+            subprocess.Popen(['powershell', '-Command', 'ollama list'], creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception as e:
+            app_logger.error(f"Failed to start Ollama: {str(e)}")
 
 @app.post("/chat/initialize", response_model=InitializeResponse, tags=["Chat"])
 async def initialize_chatbot(request: InitializeRequest):
