@@ -182,6 +182,74 @@ class OllamaChatbot(BaseChatbot):
             app_logger.error(error_msg)
             return error_msg
     
+    async def chat_stream(self, message: str):
+        """
+        Process a chat message using the Ollama model and stream the responses
+        
+        This is an async generator that yields response chunks as they arrive
+        from the model. Used for SSE and other streaming interfaces.
+        """
+        if not self.ready:
+            await self.initialize()
+            
+        if not self.ready:
+            yield "Chatbot is not ready. Please check the logs and try again."
+            return
+            
+        # Get current chat history
+        history = self.get_history()
+        
+        # Add human message to memory
+        self.memory.chat_memory.add_message(HumanMessage(content=message))
+        
+        try:
+            # Prepare messages
+            messages = history + [HumanMessage(content=message)]
+            
+            # Get a streaming response from the model
+            stream_gen = await asyncio.to_thread(
+                lambda: self.chat_model.stream(messages)
+            )
+            
+            # Initialize accumulated response to save to memory later
+            full_response = ""
+            
+            # Stream the chunks back to the client
+            async for chunk in self._aiter_from_sync_iter(stream_gen):
+                if hasattr(chunk, 'content') and chunk.content:
+                    full_response += chunk.content
+                    yield chunk.content
+                elif isinstance(chunk, dict) and 'content' in chunk:
+                    full_response += chunk['content']
+                    yield chunk['content']
+                elif isinstance(chunk, str):
+                    full_response += chunk
+                    yield chunk
+            
+            # Add the complete response to memory
+            self.memory.chat_memory.add_message(AIMessage(content=full_response))
+            
+            # Yield None to indicate we're done
+            yield None
+            
+        except Exception as e:
+            error_msg = f"Error processing streaming message: {str(e)}"
+            app_logger.error(error_msg)
+            yield error_msg
+            yield None  # Signal completion even when error occurs
+    
+    async def _aiter_from_sync_iter(self, sync_iter):
+        """Convert a synchronous iterator to an async iterator"""
+        try:
+            while True:
+                item = await asyncio.to_thread(next, sync_iter, StopAsyncIteration)
+                if item is StopAsyncIteration:
+                    break
+                yield item
+        except Exception as e:
+            app_logger.error(f"Error in async iterator conversion: {str(e)}")
+            raise
+    
     async def cleanup(self) -> None:
         """Clean up resources used by the Ollama chatbot"""
         await super().cleanup()

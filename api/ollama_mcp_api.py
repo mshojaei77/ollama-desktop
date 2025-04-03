@@ -8,10 +8,11 @@ import asyncio
 import webbrowser  # Add this import
 import threading
 import time
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
@@ -91,6 +92,22 @@ class ChatHistoryItem(BaseModel):
 class ChatHistoryResponse(BaseModel):
     session_id: str
     history: List[ChatHistoryItem]
+    count: int
+
+class ChatSession(BaseModel):
+    session_id: str
+    model_name: str
+    session_type: str
+    system_message: Optional[str] = None
+    created_at: str
+    last_active: str
+    is_active: bool
+    message_count: Optional[int] = 0
+    first_message_time: Optional[str] = None
+    last_message_time: Optional[str] = None
+
+class AvailableChatsResponse(BaseModel):
+    sessions: List[ChatSession]
     count: int
 
 
@@ -226,6 +243,63 @@ async def chat_message(request: ChatRequest):
     except Exception as e:
         app_logger.error(f"Error processing chat message: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
+
+@app.post("/chat/message/stream", tags=["Chat"])
+async def chat_message_stream(request: ChatRequest):
+    """
+    Send a message to a chatbot and stream the response using SSE
+    
+    - Requires a valid session_id from a previous /chat/initialize call
+    - Returns a streaming response from the model
+    - Saves the conversation history to the database once completed
+    """
+    if request.session_id not in active_chatbots:
+        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
+    
+    async def generate_stream() -> AsyncGenerator[str, None]:
+        """Generate streaming response from Ollama"""
+        try:
+            chatbot = active_chatbots[request.session_id]
+            
+            # Save user message to history
+            await db.add_chat_message(request.session_id, "user", request.message)
+            
+            # Set up variables to collect the full response
+            full_response = []
+            
+            # Use the chatbot's streaming method to get chunks directly from Ollama
+            async for chunk in chatbot.chat_stream(request.message):
+                if chunk is None:
+                    # This is the completion signal from chat_stream
+                    break
+                
+                # Add to the full response
+                full_response.append(chunk)
+                
+                # Send the chunk as an SSE event
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+            
+            # Combine the full response for logging (the message is already saved by chat_stream)
+            complete_response = ''.join(full_response)
+            app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
+            
+            # Update session activity
+            await db.update_session_activity(request.session_id)
+            
+            # Save assistant response to history
+            await db.add_chat_message(request.session_id, "assistant", complete_response)
+            
+            # Send completion signal
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            
+        except Exception as e:
+            app_logger.error(f"Error streaming chat message: {str(e)}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream"
+    )
 
 @app.post("/mcp/connect", response_model=InitializeResponse, tags=["MCP"])
 async def connect_to_mcp(request: MCPServerConnectRequest):
@@ -432,6 +506,7 @@ async def get_chat_history(
         start_date=start_date,
         end_date=end_date
     )
+    print(f"Chat history: {history}")
     
     return ChatHistoryResponse(
         session_id=session_id,
@@ -499,6 +574,112 @@ async def get_models(sort_by: Optional[str] = None):
     except Exception as e:
         app_logger.error(f"Error getting models: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting models: {str(e)}")
+
+@app.get("/chats", response_model=AvailableChatsResponse, tags=["Sessions"])
+async def get_chats(
+    include_inactive: bool = False,
+    limit: int = 100,
+    offset: int = 0
+):
+    try:
+        db_sessions = await db.get_sessions_with_message_count(
+            include_inactive=include_inactive,
+            limit=limit,
+            offset=offset
+        )
+        
+        sessions = []
+        for session in db_sessions:
+            # Convert timestamp fields to strings if they're datetime objects
+            created_at = session["created_at"]
+            last_active = session["last_active"]
+            first_message_time = session.get("first_message_time")
+            last_message_time = session.get("last_message_time")
+            message_count = session.get("message_count", 0)
+
+            if message_count < 1:
+                continue
+
+            sessions.append(ChatSession(
+                session_id=session["session_id"],
+                model_name=session["model_name"],
+                session_type=session["session_type"],
+                system_message=session["system_message"],
+                created_at=created_at,
+                last_active=last_active,
+                is_active=session["is_active"],
+                message_count=message_count,
+                first_message_time=first_message_time,
+                last_message_time=last_message_time
+            ))
+        
+        return AvailableChatsResponse(
+            sessions=sessions,
+            count=len(sessions)
+        )
+    except Exception as e:
+        app_logger.error(f"Error getting chats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting chats: {str(e)}")
+
+@app.get("/chats/search", response_model=AvailableChatsResponse, tags=["Sessions"])
+async def search_chats(
+    q: str,
+    include_inactive: bool = False,
+    limit: int = 100,
+    offset: int = 0
+):
+    """
+    Search for chat sessions by keyword
+    
+    - Searches in message content, model names, and system messages
+    - Returns matching chat sessions with message counts and metadata
+    - Can include inactive sessions with the include_inactive parameter
+    - Supports pagination with limit and offset parameters
+    
+    Args:
+        q: Search query string
+        include_inactive: Whether to include inactive sessions (default: False)
+        limit: Maximum number of sessions to return (default: 100)
+        offset: Number of sessions to skip for pagination (default: 0)
+    """
+    try:
+        # Search for sessions in the database
+        db_sessions = await db.search_chats(
+            search_term=q,
+            include_inactive=include_inactive,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Convert to response model
+        sessions = []
+        for session in db_sessions:
+            # Convert timestamp fields to strings if they're datetime objects
+            created_at = session["created_at"]
+            last_active = session["last_active"]
+            first_message_time = session.get("first_message_time")
+            last_message_time = session.get("last_message_time")
+            
+            sessions.append(ChatSession(
+                session_id=session["session_id"],
+                model_name=session["model_name"],
+                session_type=session["session_type"],
+                system_message=session["system_message"],
+                created_at=created_at,
+                last_active=last_active,
+                is_active=session["is_active"],
+                message_count=session.get("message_count", 0),
+                first_message_time=first_message_time,
+                last_message_time=last_message_time
+            ))
+        
+        return AvailableChatsResponse(
+            sessions=sessions,
+            count=len(sessions)
+        )
+    except Exception as e:
+        app_logger.error(f"Error searching chats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error searching chats: {str(e)}")
 
 
 # ----- Programmatic API Examples -----
