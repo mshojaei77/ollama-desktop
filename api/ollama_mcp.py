@@ -33,7 +33,7 @@ import anyio
 
 # Import the logger
 from logger import app_logger
-from .config_io import read_ollama_config
+from config_io import read_ollama_config
 
 load_dotenv()  # load environment variables from .env
 
