@@ -10,6 +10,8 @@ import time
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
+import asyncio
+from crawl4ai import AsyncWebCrawler
 
 
 class DDGO:
@@ -201,20 +203,93 @@ class DDGO:
         # Use the regular search method with the modified query
         return self.search(news_query, region, safe_search, time_limit, max_results)
 
+    async def search_with_content(self, query: str, region: str = "wt-wt", safe_search: str = "moderate",
+                          time_limit: Optional[str] = None, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Search DuckDuckGo and fetch full content for each result.
+
+        Similar to search() but additionally fetches the full content of each page.
+
+        Args:
+            query: The search query.
+            region: Region code (e.g., 'wt-wt', 'us-en', 'uk-en'). Default is 'wt-wt' (no region).
+            safe_search: Safe search setting ('on', 'moderate', 'off'). Default is 'moderate'.
+            time_limit: Time limit for results ('d' for day, 'w' for week, 'm' for month, 'y' for year).
+            max_results: Maximum number of results to return. If None, returns all results from the first page.
+
+        Returns:
+            A list of dictionaries containing search results with 'title', 'href', 'body', and 'full_content' keys.
+
+        Raises:
+            requests.RequestException: If the request fails after max_retries.
+        """
+        # Get basic search results first
+        results = self.search(query, region, safe_search, time_limit, max_results)
+        
+        # Fetch full content for each result
+        async with AsyncWebCrawler() as crawler:
+            for result in results:
+                try:
+                    crawl_result = await crawler.arun(url=result['href'])
+                    result['full_content'] = crawl_result.markdown
+                except Exception as e:
+                    result['full_content'] = f"Error fetching content: {str(e)}"
+        
+        return results
+
+    async def news_with_content(self, query: str, region: str = "wt-wt", safe_search: str = "moderate",
+                        time_limit: Optional[str] = None, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Search DuckDuckGo News and fetch full content for each result.
+
+        Similar to news() but additionally fetches the full content of each page.
+
+        Args:
+            query: The search query.
+            region: Region code (e.g., 'wt-wt', 'us-en', 'uk-en'). Default is 'wt-wt' (no region).
+            safe_search: Safe search setting ('on', 'moderate', 'off'). Default is 'moderate'.
+            time_limit: Time limit for results ('d' for day, 'w' for week, 'm' for month).
+            max_results: Maximum number of results to return. If None, returns all results from the first page.
+
+        Returns:
+            A list of dictionaries containing news search results with full content.
+
+        Raises:
+            requests.RequestException: If the request fails after max_retries.
+        """
+        news_query = f"{query} site:news"
+        return await self.search_with_content(news_query, region, safe_search, time_limit, max_results)
+
 
 if __name__ == "__main__":
-    # Simple demonstration of the DDGO class when run directly
-    client = DDGO()
+    async def main():
+        client = DDGO()
+        query = "python programming"
 
-    print("DuckDuckGo Search Example")
-    query = "python"
+        print("=" * 80)
+        print(f"DuckDuckGo Search Results for: '{query}'")
+        print("=" * 80)
 
-    print(f"\nSearching for '{query}'...")
-    results = client.search(query, max_results=5)
+        results = await client.search_with_content(query, max_results=2)
+        print(f"\nFound {len(results)} results:\n")
 
-    print(f"\nFound {len(results)} results:")
-    for i, result in enumerate(results, 1):
-        print(f"\n--- Result {i} ---")
-        print(f"Title: {result['title']}")
-        print(f"URL: {result['href']}")
-        print(f"Snippet: {result['body']}")
+        for i, result in enumerate(results, 1):
+            print(f"Result {i}/{len(results)}")
+            print("-" * 40)
+            print(f"Title    : {result['title']}")
+            print(f"URL      : {result['href']}")
+            print(f"\nSnippet  : {result['body']}")
+            
+            # Format full content with proper wrapping
+            content_preview = result['full_content'][:2000]
+            print("\nFull Content Preview:")
+            print("~" * 40)
+            # Split content into wrapped lines
+            for line in content_preview.split('\n'):
+                # Wrap long lines at 80 characters
+                wrapped_lines = [line[i:i+80] for i in range(0, len(line), 80)]
+                for wrapped in wrapped_lines:
+                    print(wrapped)
+            print("~" * 40)
+            print("\n")
+
+    asyncio.run(main())
+
