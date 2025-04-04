@@ -13,12 +13,11 @@ from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
 import db  # Import our new database module
 from config_io import read_ollama_config, write_ollama_config
-from web_search import DDGO
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -118,18 +117,6 @@ class MCPServerAddRequest(BaseModel):
     command: Optional[str] = None  # For STDIO
     args: Optional[List[str]] = None  # For STDIO
     server_url: Optional[str] = None  # For SSE
-
-class WebSearchRequest(BaseModel):
-    query: str
-    region: str = Field(default="wt-wt", description="Region code (e.g., 'wt-wt', 'us-en', 'uk-en')")
-    safe_search: str = Field(default="moderate", description="Safe search setting ('on', 'moderate', 'off')")
-    time_limit: Optional[str] = Field(default=None, description="Time limit ('d' for day, 'w' for week, 'm' for month, 'y' for year)")
-    max_results: Optional[int] = Field(default=None, description="Maximum number of results to return")
-    include_content: bool = Field(default=False, description="Whether to fetch full content for each result")
-
-class WebSearchResponse(BaseModel):
-    results: List[Dict[str, Any]]
-    count: int
 
 
 # ----- Helper Functions -----
@@ -906,80 +893,6 @@ async def initialize_chat_with_mcp(request: InitializeRequest):
     except Exception as e:
         app_logger.error(f"Error initializing chat with MCP: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.post("/search/web", response_model=WebSearchResponse, tags=["Search"])
-async def web_search(request: WebSearchRequest):
-    """
-    Search the web using DuckDuckGo
-    
-    - Performs a web search using DuckDuckGo
-    - Can optionally fetch full content for each result
-    - Supports region and safe search settings
-    """
-    try:
-        client = DDGO()
-        
-        if request.include_content:
-            results = await client.search_with_content(
-                query=request.query,
-                region=request.region,
-                safe_search=request.safe_search,
-                time_limit=request.time_limit,
-                max_results=request.max_results
-            )
-        else:
-            results = client.search(
-                query=request.query,
-                region=request.region,
-                safe_search=request.safe_search,
-                time_limit=request.time_limit,
-                max_results=request.max_results
-            )
-            
-        return WebSearchResponse(
-            results=results,
-            count=len(results)
-        )
-    except Exception as e:
-        app_logger.error(f"Error performing web search: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error performing web search: {str(e)}")
-
-@app.post("/search/news", response_model=WebSearchResponse, tags=["Search"])
-async def news_search(request: WebSearchRequest):
-    """
-    Search news articles using DuckDuckGo
-    
-    - Performs a news search using DuckDuckGo
-    - Can optionally fetch full content for each article
-    - Supports region and safe search settings
-    """
-    try:
-        client = DDGO()
-        
-        if request.include_content:
-            results = await client.news_with_content(
-                query=request.query,
-                region=request.region,
-                safe_search=request.safe_search,
-                time_limit=request.time_limit,
-                max_results=request.max_results
-            )
-        else:
-            results = client.news(
-                query=request.query,
-                region=request.region,
-                safe_search=request.safe_search,
-                time_limit=request.time_limit,
-                max_results=request.max_results
-            )
-            
-        return WebSearchResponse(
-            results=results,
-            count=len(results)
-        )
-    except Exception as e:
-        app_logger.error(f"Error performing news search: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error performing news search: {str(e)}")
 
 
 # ----- Programmatic API Examples -----

@@ -39,7 +39,7 @@ load_dotenv()  # load environment variables from .env
 
 class BaseChatbot:
     """Base class for chatbot implementations"""
-    
+
     def __init__(
         self,
         model_name: str = "gemma3:4b",
@@ -48,7 +48,7 @@ class BaseChatbot:
     ):
         """
         Initialize the base chatbot.
-        
+
         Args:
             model_name: Name of the model to use
             system_message: Optional system message to set context
@@ -58,15 +58,15 @@ class BaseChatbot:
         self.system_message = system_message
         self.verbose = verbose
         self.memory = ConversationBufferMemory(return_messages=True)
-        
+
     async def initialize(self) -> None:
         """Initialize the chatbot - to be implemented by subclasses"""
         raise NotImplementedError("Subclasses must implement initialize()")
-    
+
     async def chat(self, message: str) -> str:
         """Process a chat message and return the response"""
         raise NotImplementedError("Subclasses must implement chat()")
-    
+
     async def cleanup(self) -> None:
         """Clean up any resources used by the chatbot"""
         # Base implementation resets memory
@@ -76,7 +76,7 @@ class BaseChatbot:
         """Get the conversation history"""
         memory_variables = self.memory.load_memory_variables({})
         return memory_variables.get("history", [])
-    
+
     def clear_history(self) -> None:
         """Clear the conversation history"""
         self.memory.clear()
@@ -84,7 +84,7 @@ class BaseChatbot:
 
 class OllamaChatbot(BaseChatbot):
     """Chatbot implementation using Ollama and LangChain"""
-    
+
     def __init__(
         self,
         model_name: str = "gemma3:4b",
@@ -96,7 +96,7 @@ class OllamaChatbot(BaseChatbot):
     ):
         """
         Initialize the Ollama chatbot.
-        
+
         Args:
             model_name: Name of the Ollama model to use
             system_message: Optional system message to set context
@@ -111,7 +111,7 @@ class OllamaChatbot(BaseChatbot):
         self.top_p = top_p
         self.chat_model = None
         self.ready = False
-        
+
     async def initialize(self) -> None:
         """Initialize the Ollama chatbot"""
         try:
@@ -123,98 +123,89 @@ class OllamaChatbot(BaseChatbot):
                 top_p=self.top_p,
                 streaming=True
             )
-            
-            # Test the model with a simple query to verify connection
+
+            # Skip test connection for now
             if self.verbose:
-                app_logger.info(f"Testing connection to Ollama with model: {self.model_name}")
-            
-            # Updated API invocation pattern
-            test_message = [HumanMessage(content="Hello, are you working? Respond in one word.")]
-            test_response = await asyncio.to_thread(
-                self.chat_model.invoke,
-                test_message
-            )
-            
-            if self.verbose:
-                app_logger.info(f"Connection successful. Test response: {test_response.content[:50]}...")
-            
+                app_logger.info(f"Initializing Ollama with model: {self.model_name}")
+
+            # Set ready flag
             self.ready = True
-            
+
             # Set system message if provided
             if self.system_message:
                 self.memory.chat_memory.add_message(SystemMessage(content=self.system_message))
-                
+
         except Exception as e:
             app_logger.error(f"Failed to initialize Ollama chatbot: {str(e)}")
             self.ready = False
             raise
-    
+
     async def chat(self, message: str) -> str:
         """Process a chat message using the Ollama model"""
         if not self.ready:
             await self.initialize()
-            
+
         if not self.ready:
             return "Chatbot is not ready. Please check the logs and try again."
-            
+
         # Get current chat history
         history = self.get_history()
-        
+
         # Add human message to memory
         self.memory.chat_memory.add_message(HumanMessage(content=message))
-        
+
         try:
             # Prepare messages
             messages = history + [HumanMessage(content=message)]
-            
+
             # Invoke the model
             response = await asyncio.to_thread(
                 self.chat_model.invoke,
                 messages
             )
-            
+
             # Add the response to memory
             self.memory.chat_memory.add_message(AIMessage(content=response.content))
-            
+
             return response.content
-            
+
         except Exception as e:
             error_msg = f"Error processing message: {str(e)}"
             app_logger.error(error_msg)
             return error_msg
-    
+
     async def chat_stream(self, message: str):
         """
         Process a chat message using the Ollama model and stream the responses
-        
+
         This is an async generator that yields response chunks as they arrive
         from the model. Used for SSE and other streaming interfaces.
         """
         if not self.ready:
             await self.initialize()
-            
+
         if not self.ready:
             yield "Chatbot is not ready. Please check the logs and try again."
             return
-            
+
         # Get current chat history
         history = self.get_history()
-        
+
         # Add human message to memory
         self.memory.chat_memory.add_message(HumanMessage(content=message))
-        
+
         try:
             # Prepare messages
             messages = history + [HumanMessage(content=message)]
-            
+
             # Get a streaming response from the model
             stream_gen = await asyncio.to_thread(
                 lambda: self.chat_model.stream(messages)
             )
-            
+
             # Initialize accumulated response to save to memory later
             full_response = ""
-            
+
             # Stream the chunks back to the client
             async for chunk in self._aiter_from_sync_iter(stream_gen):
                 if hasattr(chunk, 'content') and chunk.content:
@@ -226,19 +217,19 @@ class OllamaChatbot(BaseChatbot):
                 elif isinstance(chunk, str):
                     full_response += chunk
                     yield chunk
-            
+
             # Add the complete response to memory
             self.memory.chat_memory.add_message(AIMessage(content=full_response))
-            
+
             # Yield None to indicate we're done
             yield None
-            
+
         except Exception as e:
             error_msg = f"Error processing streaming message: {str(e)}"
             app_logger.error(error_msg)
             yield error_msg
             yield None  # Signal completion even when error occurs
-    
+
     async def _aiter_from_sync_iter(self, sync_iter):
         """Convert a synchronous iterator to an async iterator"""
         try:
@@ -250,7 +241,7 @@ class OllamaChatbot(BaseChatbot):
         except Exception as e:
             app_logger.error(f"Error in async iterator conversion: {str(e)}")
             raise
-    
+
     async def cleanup(self) -> None:
         """Clean up resources used by the Ollama chatbot"""
         await super().cleanup()
@@ -260,11 +251,11 @@ class OllamaChatbot(BaseChatbot):
 
 class MCPClient:
     """Client for connecting to MCP servers with Ollama integration"""
-    
+
     def __init__(self, model_name: str = None):
         """
         Initialize the MCP client
-        
+
         Args:
             model_name: Optional model name (defaults to OLLAMA_MODEL env var or "gemma3:4b")
         """
@@ -275,25 +266,25 @@ class MCPClient:
         self.exit_stack = AsyncExitStack()
         self.model = model_name or os.getenv("OLLAMA_MODEL", "gemma3:4b")
         self.direct_mode = False  # Flag to indicate if we're in direct chat mode
-        
+
         # Initialize chatbot
         self.chatbot = OllamaChatbot(model_name=self.model, verbose=True)
-        
+
         app_logger.info(f"MCPClient initialized with model: {self.model}")
 
     async def connect_to_sse_server(self, server_url: str) -> bool:
         """
         Connect to an MCP server running with SSE transport
-        
+
         Args:
             server_url: URL of the SSE server
-            
+
         Returns:
             bool: True if connection was successful
         """
         # Ensure any previous connections are cleaned up first
         await self.cleanup()
-        
+
         try:
             # Store the context managers so they stay alive
             self._streams_context = sse_client(url=server_url)
@@ -311,12 +302,12 @@ class MCPClient:
             response = await self.session.list_tools()
             tools = response.tools
             app_logger.info(f"Connected to server with tools: {[tool.name for tool in tools]}")
-            
+
             # Initialize the chatbot
             await self.chatbot.initialize()
-            
+
             return True
-            
+
         except Exception as e:
             error_msg = str(e).lower()
             if self._is_port_in_use_error(error_msg):
@@ -333,17 +324,17 @@ class MCPClient:
     async def connect_to_stdio_server(self, command: str, args: list) -> bool:
         """
         Connect to an MCP server running with STDIO transport (NPX, UV, etc.)
-        
+
         Args:
             command: Command to run (e.g., "npx", "uv")
             args: Arguments to pass to the command
-            
+
         Returns:
             bool: True if connection was successful
         """
         # Ensure any previous connections are cleaned up first
         await self.cleanup()
-        
+
         try:
             # On Windows, we need to use cmd.exe to run npx
             if os.name == 'nt' and command in ['npx', 'uv']:
@@ -356,7 +347,7 @@ class MCPClient:
             else:
                 # For non-Windows systems or other commands
                 server_params = StdioServerParameters(command=command, args=args)
-            
+
             # Store the context managers so they stay alive
             self._streams_context = stdio_client(server_params)
             streams = await self._streams_context.__aenter__()
@@ -378,12 +369,12 @@ class MCPClient:
             response = await self.session.list_tools()
             tools = response.tools
             app_logger.info(f"Connected to server with tools: {[tool.name for tool in tools]}")
-            
+
             # Initialize the chatbot
             await self.chatbot.initialize()
-            
+
             return True
-            
+
         except Exception as e:
             error_msg = str(e).lower()
             if self._is_port_in_use_error(error_msg):
@@ -399,14 +390,14 @@ class MCPClient:
         """Helper method to detect if an error is related to port conflicts"""
         port_conflict_indicators = [
             "address already in use",
-            "port already in use", 
+            "port already in use",
             "address in use",
             "eaddrinuse",
             "connection refused",
             "cannot bind to address",
             "failed to listen on"
         ]
-        
+
         error_message = error_message.lower()
         return any(indicator in error_message for indicator in port_conflict_indicators)
 
@@ -414,7 +405,7 @@ class MCPClient:
         """Try to extract port information from command args"""
         # Common patterns for port specification in command line args
         port = "unknown port"
-        
+
         for i, arg in enumerate(args):
             if arg == "--port" and i + 1 < len(args):
                 port = args[i + 1]
@@ -425,13 +416,13 @@ class MCPClient:
             elif arg == "-p" and i + 1 < len(args):
                 port = args[i + 1]
                 break
-        
+
         return port
 
     async def cleanup(self):
         """
         Properly clean up the session and streams
-        
+
         Returns:
             None
         """
@@ -439,7 +430,7 @@ class MCPClient:
             # Clean up the chatbot
             if hasattr(self, 'chatbot') and self.chatbot:
                 await self.chatbot.cleanup()
-            
+
             if self._session_context:
                 try:
                     await self._session_context.__aexit__(None, None, None)
@@ -447,7 +438,7 @@ class MCPClient:
                     app_logger.error(f"Error during session cleanup: {str(e)}")
                 finally:
                     self._session_context = None
-            
+
             if self._streams_context:
                 try:
                     await self._streams_context.__aexit__(None, None, None)
@@ -455,11 +446,11 @@ class MCPClient:
                     app_logger.error(f"Error during streams cleanup: {str(e)}")
                 finally:
                     self._streams_context = None
-                    
+
             # Force garbage collection to help release resources
             import gc
             gc.collect()
-            
+
             # Reset resources
             self.session = None
         except Exception as e:
@@ -468,10 +459,10 @@ class MCPClient:
     async def process_query(self, query: str) -> str:
         """
         Process a query using Ollama and available tools
-        
+
         Args:
             query: The query text to process
-            
+
         Returns:
             str: Response text
         """
@@ -489,7 +480,7 @@ class MCPClient:
             else:
                 app_logger.error("Unable to automatically reconnect. Please restart the client.")
                 return "Connection to server lost. Please restart the client."
-            
+
             # Try again after reconnection
             try:
                 response = await self.session.list_tools()
@@ -498,43 +489,43 @@ class MCPClient:
                 return f"Failed to reconnect to server: {str(e)}"
 
         available_tools = response.tools
-        
+
         try:
             # Generate initial response with the chatbot
             app_logger.debug(f"Processing query with Ollama model: {self.model}")
             initial_result = await self.chatbot.chat(query)
-            
+
             # Check for potential tool calls in the response
             tool_results = []
             final_text = [initial_result]
-            
+
             # Extract potential tool calls from the text
             # This is a simplified approach - for production use, you'd use a more robust parser
             import re
             tool_call_pattern = r"\{\s*\"name\":\s*\"([^\"]+)\"\s*,\s*\"arguments\":\s*(\{[^}]+\})\s*\}"
             matches = re.findall(tool_call_pattern, initial_result)
-            
+
             # Process any tool calls found
             for tool_name, args_str in matches:
                 try:
                     # Parse the arguments
                     tool_args = json.loads(args_str)
-                    
+
                     # Check if this tool exists
                     if any(tool.name == tool_name for tool in available_tools):
                         # Execute tool call
                         app_logger.info(f"Calling tool: {tool_name} with args: {json.dumps(tool_args)}")
                         result = await self.session.call_tool(tool_name, tool_args)
-                        
+
                         # Extract the content as a string from the result object
                         if hasattr(result, 'content'):
                             result_content = str(result.content)
                         else:
                             result_content = str(result)
-                            
+
                         tool_results.append({"call": tool_name, "result": result_content})
                         final_text.append(f"[Called tool {tool_name} with result: {result_content}]")
-                        
+
                         # Get final response about the tool result
                         follow_up = f"The tool {tool_name} returned: {result_content}. Please provide your final answer based on this information."
                         final_response = await self.chatbot.chat(follow_up)
@@ -543,12 +534,12 @@ class MCPClient:
                     error_msg = f"Error executing tool {tool_name}: {str(e)}"
                     app_logger.error(error_msg)
                     final_text.append(error_msg)
-            
+
             return "\n".join(final_text)
-            
+
         except Exception as e:
             error_msg = str(e)
-            
+
             # Check for server connection issues (502 status code)
             if "status code: 502" in error_msg:
                 # Extract server information from environment
@@ -556,7 +547,7 @@ class MCPClient:
                 error_message = f"Your local Ollama server at {server_url} is busy by other app or proxy"
                 app_logger.error(f"Error in process_query: {error_message}")
                 return error_message
-            
+
             # For other errors, log the full error
             app_logger.error(f"Error in process_query: {error_msg}")
             return f"An error occurred: {error_msg}"
@@ -564,10 +555,10 @@ class MCPClient:
     async def process_direct_query(self, query: str) -> str:
         """
         Process a query using Ollama directly without MCP tools
-        
+
         Args:
             query: The query text to process
-            
+
         Returns:
             str: Response text
         """
@@ -577,7 +568,7 @@ class MCPClient:
             return result
         except Exception as e:
             error_msg = str(e)
-            
+
             # Check for server connection issues (502 status code)
             if "status code: 502" in error_msg:
                 # Extract server information from environment
@@ -585,7 +576,7 @@ class MCPClient:
                 error_message = f"Your local Ollama server at {server_url} is busy by other app or proxy"
                 app_logger.error(f"Error in process_direct_query: {error_message}")
                 return error_message
-            
+
             # For other errors, log the full error
             app_logger.error(f"Error in process_direct_query: {error_msg}")
             return f"An error occurred: {error_msg}"
@@ -593,20 +584,20 @@ class MCPClient:
 
 class OllamaMCPPackage:
     """Main package class for using Ollama with MCP"""
-    
+
     @staticmethod
     async def create_client(model_name: str = None) -> MCPClient:
         """
         Create and return a new MCP client
-        
+
         Args:
             model_name: Optional model name to use
-            
+
         Returns:
             MCPClient: Initialized client
         """
         return MCPClient(model_name=model_name)
-    
+
     @staticmethod
     async def create_standalone_chatbot(
         model_name: str = "gemma3:4b",
@@ -616,13 +607,13 @@ class OllamaMCPPackage:
     ) -> OllamaChatbot:
         """
         Create and initialize a standalone Ollama chatbot
-        
+
         Args:
             model_name: Name of the Ollama model to use
             system_message: Optional system message to set context
             base_url: Base URL for the Ollama API
             temperature: Temperature parameter for generation
-            
+
         Returns:
             OllamaChatbot: Initialized chatbot
         """
@@ -634,20 +625,20 @@ class OllamaMCPPackage:
         )
         await chatbot.initialize()
         return chatbot
-    
+
     @staticmethod
     async def get_available_models(base_url: Optional[str] = None) -> List[str]:
         """
         Get a list of available Ollama models
-        
+
         Args:
             base_url: Optional base URL for the Ollama API
-            
+
         Returns:
             List[str]: List of available model names
         """
         import requests
-        
+
         try:
             base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
             response = requests.get(f"{base_url}/api/tags")
@@ -656,19 +647,19 @@ class OllamaMCPPackage:
         except Exception as e:
             app_logger.error(f"Error getting available models: {str(e)}")
             return []
-    
+
     @staticmethod
     async def load_mcp_config() -> Dict[str, Any]:
         """
         Load MCP server configuration
-        
+
         Returns:
             Dict[str, Any]: Configuration dictionary with server information
         """
         try:
             from config_io import read_ollama_config
             config = read_ollama_config()
-            
+
             if config and 'mcpServers' in config:
                 return config
             else:
@@ -686,13 +677,13 @@ class OllamaMCPPackage:
         """Get MCP server configuration by name"""
         if not server_name:
             return None
-        
+
         try:
             config = await read_ollama_config()
             if not config or "mcpServers" not in config:
                 app_logger.warning("MCP servers configuration not found or empty.")
                 return None
-            
+
             server_conf = config["mcpServers"].get(server_name)
             if not server_conf:
                 app_logger.warning(f"Configuration for MCP server '{server_name}' not found.")
