@@ -63,7 +63,7 @@ class ChatResponse(BaseModel):
     session_id: str
 
 class InitializeRequest(BaseModel):
-    model_name: str = "gemma3:4b"
+    model_name: str = "llama3.2"
     system_message: Optional[str] = None
     session_id: Optional[str] = None
     
@@ -78,7 +78,7 @@ class MCPServerConnectRequest(BaseModel):
     command: Optional[str] = None     # For STDIO
     args: Optional[List[str]] = None  # For STDIO
     session_id: Optional[str] = None
-    model_name: str = "gemma3:4b"
+    model_name: str = "llama3.2"
 
 class StatusResponse(BaseModel):
     status: str
@@ -901,7 +901,7 @@ async def example_standalone():
     """Example of using the package with standalone Ollama (no MCP)"""
     # Create a standalone chatbot
     chatbot = await OllamaMCPPackage.create_standalone_chatbot(
-        model_name="gemma3:4b",
+        model_name="llama3.2",
         system_message="You are a helpful assistant who speaks like a pirate.",
         temperature=0.8
     )

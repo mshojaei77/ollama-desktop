@@ -53,17 +53,17 @@ def mock_db():
             {"role": "assistant", "content": "Hi there!", "timestamp": "2023-01-01T00:00:01"}
         ])
         mock_db.get_recently_used_models = AsyncMock(return_value=[
-            {"name": "gemma3:4b", "last_used": "2023-01-01T00:00:00"}
+            {"name": "llama3.2", "last_used": "2023-01-01T00:00:00"}
         ])
         mock_db.get_models = AsyncMock(return_value=[
-            {"name": "gemma3:4b", "last_used": "2023-01-01T00:00:00"},
+            {"name": "llama3.2", "last_used": "2023-01-01T00:00:00"},
             {"name": "gemma", "last_used": "2023-01-01T00:00:01"}
         ])
         mock_db.ensure_model_exists = AsyncMock()
         mock_db.get_sessions_with_message_count = AsyncMock(return_value=[
             {
                 "session_id": "test-session-1",
-                "model_name": "gemma3:4b",
+                "model_name": "llama3.2",
                 "session_type": "chatbot",
                 "system_message": "You are a helpful assistant",
                 "created_at": "2023-01-01T00:00:00",
@@ -77,7 +77,7 @@ def mock_db():
         mock_db.search_chats = AsyncMock(return_value=[
             {
                 "session_id": "test-session-1",
-                "model_name": "gemma3:4b",
+                "model_name": "llama3.2",
                 "session_type": "chatbot",
                 "system_message": "You are a helpful assistant",
                 "created_at": "2023-01-01T00:00:00",
@@ -97,7 +97,7 @@ def mock_ollama_mcp_package():
         # Setup mock methods for the package
         mock_package.create_standalone_chatbot = AsyncMock(side_effect=lambda **kwargs: MockChatbot(**kwargs))
         mock_package.create_client = AsyncMock(side_effect=lambda **kwargs: MockMCPClient(**kwargs))
-        mock_package.get_available_models = AsyncMock(return_value=["gemma3:4b", "gemma", "llama-3-8b"])
+        mock_package.get_available_models = AsyncMock(return_value=["llama3.2", "gemma", "llama-3-8b"])
         mock_package.load_mcp_config = AsyncMock(return_value={
             "mcpServers": {
                 "server1": {"type": "sse", "url": "http://localhost:3000/sse"},
@@ -127,13 +127,13 @@ def test_root_endpoint():
 def test_initialize_chatbot(mock_ollama_mcp_package, mock_db):
     """Test chatbot initialization."""
     response = client.post("/chat/initialize", json={
-        "model_name": "gemma3:4b",
+        "model_name": "llama3.2",
         "system_message": "You are a helpful assistant."
     })
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ready"
-    assert data["model"] == "gemma3:4b"
+    assert data["model"] == "llama3.2"
     assert "session_id" in data
     
     # Verify the mocks were called correctly
@@ -153,7 +153,7 @@ def test_chat_message(mock_ollama_mcp_package, mock_db):
     """Test sending a message to a chatbot."""
     # First initialize a chatbot
     init_response = client.post("/chat/initialize", json={
-        "model_name": "gemma3:4b",
+        "model_name": "llama3.2",
         "system_message": "You are a helpful assistant."
     })
     session_id = init_response.json()["session_id"]
@@ -187,12 +187,12 @@ def test_mcp_connect(mock_ollama_mcp_package, mock_db):
     response = client.post("/mcp/connect", json={
         "server_type": "sse",
         "server_url": "http://localhost:3000/sse",
-        "model_name": "gemma3:4b"
+        "model_name": "llama3.2"
     })
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "connected"
-    assert data["model"] == "gemma3:4b"
+    assert data["model"] == "llama3.2"
     assert "session_id" in data
     
     # Verify mocks were called correctly
@@ -203,7 +203,7 @@ def test_mcp_connect_missing_url(mock_ollama_mcp_package):
     """Test connecting to an SSE server without URL."""
     response = client.post("/mcp/connect", json={
         "server_type": "sse",
-        "model_name": "gemma3:4b"
+        "model_name": "llama3.2"
     })
     assert response.status_code == 400
     assert "server_url is required" in response.json()["detail"]
@@ -214,12 +214,12 @@ def test_mcp_connect_stdio(mock_ollama_mcp_package, mock_db):
         "server_type": "stdio",
         "command": "python",
         "args": ["server.py"],
-        "model_name": "gemma3:4b"
+        "model_name": "llama3.2"
     })
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "connected"
-    assert data["model"] == "gemma3:4b"
+    assert data["model"] == "llama3.2"
     assert "session_id" in data
 
 def test_mcp_query(mock_ollama_mcp_package, mock_db):
@@ -228,7 +228,7 @@ def test_mcp_query(mock_ollama_mcp_package, mock_db):
     init_response = client.post("/mcp/connect", json={
         "server_type": "sse",
         "server_url": "http://localhost:3000/sse",
-        "model_name": "gemma3:4b"
+        "model_name": "llama3.2"
     })
     session_id = init_response.json()["session_id"]
     
@@ -248,7 +248,7 @@ def test_direct_query(mock_ollama_mcp_package, mock_db):
     init_response = client.post("/mcp/connect", json={
         "server_type": "sse",
         "server_url": "http://localhost:3000/sse",
-        "model_name": "gemma3:4b"
+        "model_name": "llama3.2"
     })
     session_id = init_response.json()["session_id"]
     
@@ -269,7 +269,7 @@ def test_available_models(mock_ollama_mcp_package):
     data = response.json()
     assert "models" in data
     assert len(data["models"]) == 3
-    assert "gemma3:4b" in data["models"]
+    assert "llama3.2" in data["models"]
 
 def test_mcp_servers(mock_ollama_mcp_package):
     """Test getting MCP servers configuration."""
@@ -285,7 +285,7 @@ def test_delete_session(mock_db):
     """Test deleting a session."""
     # First initialize a chatbot
     init_response = client.post("/chat/initialize", json={
-        "model_name": "gemma3:4b",
+        "model_name": "llama3.2",
         "system_message": "You are a helpful assistant."
     })
     session_id = init_response.json()["session_id"]
@@ -342,7 +342,7 @@ def test_get_recent_models(mock_db):
     data = response.json()
     assert "models" in data
     assert len(data["models"]) == 1
-    assert data["models"][0]["name"] == "gemma3:4b"
+    assert data["models"][0]["name"] == "llama3.2"
 
 def test_get_models(mock_db):
     """Test getting all models."""
@@ -351,7 +351,7 @@ def test_get_models(mock_db):
     data = response.json()
     assert "models" in data
     assert len(data["models"]) == 2
-    assert data["models"][0]["name"] == "gemma3:4b"
+    assert data["models"][0]["name"] == "llama3.2"
     assert data["models"][1]["name"] == "gemma"
 
 def test_get_models_with_sort(mock_db):
@@ -440,7 +440,7 @@ def test_get_chats(mock_db):
     assert "count" in data
     assert data["count"] == 1
     assert data["sessions"][0]["session_id"] == "test-session-1"
-    assert data["sessions"][0]["model_name"] == "gemma3:4b"
+    assert data["sessions"][0]["model_name"] == "llama3.2"
 
 def test_search_chats(mock_db):
     """Test searching for chats."""
