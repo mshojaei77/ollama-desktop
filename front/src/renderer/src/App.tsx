@@ -3,6 +3,7 @@ import Chat from './containers/Chat'
 import Sidebar from './containers/Sidebar'
 import MCPServers from './containers/MCPServers'
 import Settings from './containers/Settings'
+import Agents from './containers/Agents'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './fetch/queries'
 import { HashRouter, Routes, Route } from 'react-router-dom'
@@ -51,6 +52,7 @@ function App(): JSX.Element {
               <Route path={AppRoutes.HOME} element={<Chat />} />
               <Route path={AppRoutes.MCP_SERVERS} element={<MCPServers />} />
               <Route path={AppRoutes.SETTINGS} element={<Settings />} />
+              <Route path={AppRoutes.AGENTS} element={<Agents />} />
             </Routes>
           </div>
         </div>

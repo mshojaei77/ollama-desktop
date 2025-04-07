@@ -121,3 +121,15 @@
 .dark * {
   scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
 }
+
+/* Dark mode select and option styling */
+.dark select {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
+}
+
+.dark option {
+  background-color: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+}

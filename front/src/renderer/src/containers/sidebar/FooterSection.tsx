@@ -14,7 +14,10 @@ const FooterSection = (): JSX.Element => {
         <Wrench className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
         <span className="text-sm text-[hsl(var(--foreground))]">MCP Servers</span>
       </div>
-      <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]">
+      <div 
+        className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]"
+        onClick={() => navigate(Routes.AGENTS)}
+      >
         <Bot className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
         <span className="text-sm text-[hsl(var(--foreground))]">Agents</span>
       </div>
