@@ -22,7 +22,7 @@ const MCPServers: React.FC = () => {
     <div className="flex flex-col p-4 h-full max-h-screen bg-[hsl(var(--background))] px-20">
       <h1 className="text-5xl font-bold mb-4">MCP Servers</h1>
       <div className="flex justify-between items-center mb-10">
-        <p className=" text-gray-500">Manage your MCP server connections.</p>
+        <p className="text-[hsl(var(--muted-foreground))]">Manage your MCP server connections.</p>
         <div className="flex gap-3">
           <Button 
             variant="outline" 
@@ -53,7 +53,7 @@ const MCPServers: React.FC = () => {
       )}
 
       {mcpServers && Object.keys(mcpServers?.servers || {}).length === 0 && (
-        <div className="text-center py-8 bg-gray-800 rounded-lg">
+        <div className="text-center py-8 bg-[hsl(var(--card))] rounded-lg">
           <p className="text-xl">No MCP servers configured yet.</p>
         </div>
       )}

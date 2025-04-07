@@ -5,7 +5,7 @@ export const MessageActions = ({ message, onCopy, onRefresh }: MessageActionProp
     <div className="flex items-center gap-2 mt-1">
       <button
         onClick={() => onCopy(message.content)}
-        className="p-1 text-gray-500 hover:text-gray-700"
+        className="p-1 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
         title="Copy to clipboard"
       >
         <svg
@@ -25,7 +25,7 @@ export const MessageActions = ({ message, onCopy, onRefresh }: MessageActionProp
       </button>
       <button
         onClick={() => onRefresh(message.id)}
-        className="p-1 text-gray-500 hover:text-gray-700"
+        className="p-1 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
         title="Regenerate response"
       >
         <svg

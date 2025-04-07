@@ -54,13 +54,13 @@ const ServersTable = ({
 
   return (
     <>
-      <div key={serverName} className="bg-white rounded-lg shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-md">
+      <div key={serverName} className="bg-[hsl(var(--card))] rounded-lg shadow-sm border border-[hsl(var(--border))] transition-all duration-200 hover:shadow-md">
         {/* Server Header Section */}
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-3">
-            <div className={`h-3 w-3 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'} transition-colors duration-300`}></div>
-            <h2 className="text-xl font-semibold text-gray-800">{serverName}</h2>
-            <span className="bg-gray-200 text-gray-700 px-2 py-0.5 rounded text-sm font-medium">
+            <div className={`h-3 w-3 rounded-full ${isActive ? 'bg-green-500' : 'bg-[hsl(var(--muted-foreground))]'} transition-colors duration-300`}></div>
+            <h2 className="text-xl font-semibold text-[hsl(var(--foreground))]">{serverName}</h2>
+            <span className="bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] px-2 py-0.5 rounded text-sm font-medium">
               {serverConfig.type || 'stdio'}
             </span>
           </div>
@@ -71,12 +71,12 @@ const ServersTable = ({
               disabled={isToggling}
               onClick={handleStatusChange}
               className={`relative inline-flex h-8 w-16 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                isActive ? 'bg-green-500' : 'bg-gray-300'
+                isActive ? 'bg-green-500' : 'bg-[hsl(var(--muted))]'
               } ${isToggling ? 'opacity-70' : ''}`}
             >
               <span className="sr-only">{isActive ? 'Deactivate' : 'Activate'} server</span>
               <span
-                className={`pointer-events-none relative inline-block h-7 w-7 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                className={`pointer-events-none relative inline-block h-7 w-7 transform rounded-full bg-[hsl(var(--background))] shadow ring-0 transition duration-200 ease-in-out ${
                   isActive ? 'translate-x-8' : 'translate-x-0'
                 }`}
               >
@@ -94,7 +94,7 @@ const ServersTable = ({
                 variant="outline" 
                 size="sm" 
                 onClick={() => setIsEditDialogOpen(true)}
-                className="flex items-center gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 hover:border-blue-300"
+                className="flex items-center gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900 dark:border-blue-800 dark:hover:border-blue-700"
               >
                 <Pencil className="h-4 w-4" />
                 Edit
@@ -105,7 +105,7 @@ const ServersTable = ({
                 size="sm" 
                 onClick={handleDeleteServer}
                 disabled={isDeleting}
-                className="flex items-center gap-1 text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300"
+                className="flex items-center gap-1 text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-900 dark:border-red-800 dark:hover:border-red-700"
               >
                 {isDeleting ? (
                   <span className="flex items-center gap-1">
@@ -124,9 +124,9 @@ const ServersTable = ({
         </div>
 
         {/* Server Details Section */}
-        <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 rounded-b-lg">
+        <div className="px-4 py-3 bg-[hsl(var(--secondary))] border-t border-[hsl(var(--border))] rounded-b-lg">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center text-gray-500">
+            <div className="flex items-center text-[hsl(var(--muted-foreground))]">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 className="h-5 w-5 mr-1"
@@ -147,19 +147,19 @@ const ServersTable = ({
               {serverConfig.tools ? (
                 Array.isArray(serverConfig.tools) ? (
                   serverConfig.tools.map((tool: string, index: number) => (
-                    <span key={index} className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm font-medium">
+                    <span key={index} className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-0.5 rounded text-sm font-medium">
                       {tool}
                     </span>
                   ))
                 ) : (
-                  <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm font-medium">
+                  <span className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-0.5 rounded text-sm font-medium">
                     {typeof serverConfig.tools === 'string'
                       ? serverConfig.tools
                       : 'sequentialthinking'}
                   </span>
                 )
               ) : (
-                <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm font-medium">
+                <span className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-2 py-0.5 rounded text-sm font-medium">
                   {serverName === 'sequential'
                     ? 'sequentialthinking'
                     : serverName === 'web research'

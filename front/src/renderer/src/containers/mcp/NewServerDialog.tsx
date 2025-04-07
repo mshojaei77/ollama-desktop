@@ -341,24 +341,24 @@ const NewServerDialog = ({
 
   return (
     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-      <DialogContent className="bg-white text-black">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Add MCP Server</DialogTitle>
         </DialogHeader>
         
         <div className="mb-4">
-          <div className="flex gap-2 border-b pb-2">
+          <div className="flex gap-2 border-b border-[hsl(var(--border))] pb-2">
             <Button 
               variant={!isJsonMode ? "default" : "outline"}
               onClick={() => setIsJsonMode(false)}
-              className={!isJsonMode ? "bg-blue-500 text-white hover:bg-blue-600" : "bg-white hover:bg-gray-100"}
+              className={!isJsonMode ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary))] hover:brightness-110" : ""}
             >
               Form
             </Button>
             <Button 
               variant={isJsonMode ? "default" : "outline"}
               onClick={() => setIsJsonMode(true)}
-              className={isJsonMode ? "bg-blue-500 text-white hover:bg-blue-600" : "bg-white hover:bg-gray-100"}
+              className={isJsonMode ? "bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:bg-[hsl(var(--primary))] hover:brightness-110" : ""}
             >
               JSON
             </Button>
@@ -376,7 +376,7 @@ const NewServerDialog = ({
                 name="name"
                 value={newServer.name}
                 onChange={handleInputChange}
-                className="col-span-3 bg-white text-black border-gray-300"
+                className="col-span-3 bg-[hsl(var(--background))] border-[hsl(var(--border))]"
                 placeholder="my-server"
               />
             </div>
@@ -385,10 +385,10 @@ const NewServerDialog = ({
                 Type
               </label>
               <Select value={newServer.type} onValueChange={handleTypeChange}>
-                <SelectTrigger className="col-span-3 bg-white text-black border-gray-300">
+                <SelectTrigger className="col-span-3">
                   <SelectValue placeholder="Select type" />
                 </SelectTrigger>
-                <SelectContent className="bg-white text-black">
+                <SelectContent>
                   <SelectItem value="stdio">stdio</SelectItem>
                   <SelectItem value="sse">sse</SelectItem>
                 </SelectContent>
@@ -407,7 +407,7 @@ const NewServerDialog = ({
                     name="command"
                     value={newServer.command}
                     onChange={handleInputChange}
-                    className="col-span-3 bg-white text-black border-gray-300"
+                    className="col-span-3 bg-[hsl(var(--background))] border-[hsl(var(--border))]"
                     placeholder="npx, uvx, etc."
                   />
                 </div>
@@ -420,7 +420,7 @@ const NewServerDialog = ({
                     name="args"
                     value={newServer.args}
                     onChange={handleInputChange}
-                    className="col-span-3 bg-white text-black border-gray-300"
+                    className="col-span-3 bg-[hsl(var(--background))] border-[hsl(var(--border))]"
                     placeholder="mcp-server-fetch"
                   />
                 </div>
@@ -437,7 +437,7 @@ const NewServerDialog = ({
                   name="serverUrl"
                   value={newServer.serverUrl}
                   onChange={handleInputChange}
-                  className="col-span-3 bg-white text-black border-gray-300"
+                  className="col-span-3 bg-[hsl(var(--background))] border-[hsl(var(--border))]"
                   placeholder="http://localhost:3000/sse"
                 />
               </div>
@@ -447,7 +447,6 @@ const NewServerDialog = ({
               <Button
                 type="submit"
                 onClick={handleAddServer}
-                className="bg-white text-black border border-gray-300 hover:bg-gray-100"
                 disabled={isSubmitting}
               >
                 {isSubmitting ? 'Adding...' : 'Add Server'}
@@ -464,10 +463,10 @@ const NewServerDialog = ({
                 id="jsonConfig"
                 value={jsonConfig}
                 onChange={handleJsonChange as any}
-                className="h-48 w-full p-2 bg-white text-black border border-gray-300 rounded font-mono"
+                className="h-48 w-full p-2 bg-[hsl(var(--background))] border-[hsl(var(--border))] rounded font-mono"
                 placeholder={`{\n  "mcpServers": {\n    "calculator": {\n      "command": "uvx",\n      "args": ["mcp-server-calculator"]\n    }\n  }\n}`}
               />
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
                 Paste a JSON object containing an "mcpServers" object with server configurations.
               </p>
             </div>
@@ -476,7 +475,6 @@ const NewServerDialog = ({
               <Button
                 type="submit"
                 onClick={handleAddFromJson}
-                className="bg-white text-black border border-gray-300 hover:bg-gray-100"
                 disabled={isSubmitting}
               >
                 {isSubmitting ? 'Adding...' : 'Add From JSON'}

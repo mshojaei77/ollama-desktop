@@ -89,24 +89,24 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
   }
 
   return (
-    <div className="flex-grow overflow-y-auto px-2">
+    <div className="flex-grow overflow-y-auto px-2 hide-scrollbar">
       <div className="flex justify-between items-center px-2 mb-2">
-        <h3 className="text-xs font-semibold text-gray-600">
+        <h3 className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">
           {searchQuery ? 'Search Results' : 'Available Chats'}
         </h3>
         {(isLoadingChats || isSearchingChats) && (
-          <Loader2 className="h-3 w-3 animate-spin text-gray-400" />
+          <Loader2 className="h-3 w-3 animate-spin text-[hsl(var(--muted-foreground))]" />
         )}
       </div>
 
       {(isChatsError || isSearchError) && (
-        <div className="p-2 bg-red-50 text-red-600 rounded-lg text-xs mx-2">
+        <div className="p-2 bg-[hsl(var(--destructive))] bg-opacity-10 text-[hsl(var(--destructive))] rounded-lg text-xs mx-2">
           Error: Failed to load chats
         </div>
       )}
 
       {displayedChats.length === 0 ? (
-        <div className="text-xs text-gray-500 px-2">
+        <div className="text-xs text-[hsl(var(--muted-foreground))] px-2">
           {searchQuery
             ? 'No matching chats found. Try a different search term.'
             : 'No chats available. Start a new chat to begin.'}
@@ -117,23 +117,25 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
             key={chat.id}
             onClick={() => handleChatClick(chat)}
             className={`flex flex-col p-2 rounded-lg cursor-pointer mb-1 ${
-              activeChat === chat.id || sessionId === chat.id ? 'bg-gray-100' : 'hover:bg-gray-50'
+              activeChat === chat.id || sessionId === chat.id 
+                ? 'bg-[hsl(var(--secondary))]' 
+                : 'hover:bg-[hsl(var(--secondary))]'
             }`}
           >
             <div className="flex items-center">
-              <MessageSquare className="h-4 w-4 mr-2 text-gray-500 flex-shrink-0" />
-              <span className="text-sm text-gray-700 font-medium truncate">{chat.title}</span>
+              <MessageSquare className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))] flex-shrink-0" />
+              <span className="text-sm text-[hsl(var(--foreground))] font-medium truncate">{chat.title}</span>
             </div>
 
             <div className="ml-6 mt-1">
               <div className="flex justify-between">
-                <p className="text-xs text-gray-500 truncate">{chat.messageCount} messages</p>
+                <p className="text-xs text-[hsl(var(--muted-foreground))] truncate">{chat.messageCount} messages</p>
                 {chat.timestamp && (
-                  <p className="text-xs text-gray-400">{formatDate(chat.timestamp)}</p>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">{formatDate(chat.timestamp)}</p>
                 )}
               </div>
               {chat.lastMessage && (
-                <p className="text-xs text-gray-500 truncate">{chat.lastMessage}</p>
+                <p className="text-xs text-[hsl(var(--muted-foreground))] truncate">{chat.lastMessage}</p>
               )}
             </div>
           </div>

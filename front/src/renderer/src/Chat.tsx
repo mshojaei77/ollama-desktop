@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@renderer/components/ui/button'
+import 'highlight.js/styles/github.css'
+import 'highlight.js/styles/github-dark.css'
 import '../styles/markdown.css'
 import { useChatStore } from '../store/chatStore'
 import WelcomeNote from './chat/WelcomeNote'
@@ -26,31 +28,32 @@ export default function Chat(): JSX.Element {
     const updateSyntaxTheme = () => {
       const isDarkMode = document.documentElement.classList.contains('dark')
       
-      // Create or update the highlight.js link
-      let linkElement = document.getElementById('highlight-theme') as HTMLLinkElement
+      // Get all existing highlight.js stylesheets
+      const existingLinks = document.querySelectorAll('link[data-highlight-theme]')
+      existingLinks.forEach(link => link.remove())
       
-      if (!linkElement) {
-        linkElement = document.createElement('link')
-        linkElement.rel = 'stylesheet'
-        linkElement.id = 'highlight-theme'
-        document.head.appendChild(linkElement)
-      }
+      // Create and append appropriate stylesheet
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.setAttribute('data-highlight-theme', 'true')
       
-      // Set appropriate theme
       if (isDarkMode) {
-        linkElement.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css'
+        link.href = '/highlightjs/github-dark.css'
       } else {
-        linkElement.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css'
+        link.href = '/highlightjs/github.css'
       }
+      
+      document.head.appendChild(link)
     }
     
-    // Initial setup
+    // Run on mount
     updateSyntaxTheme()
     
-    // Listen for theme changes
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === 'class') {
+    // Set up observer to detect theme changes
+    const observer = new MutationObserver(mutations => {
+      mutations.forEach(mutation => {
+        if (mutation.attributeName === 'class' && 
+            (mutation.target as Element).classList.contains('dark') !== undefined) {
           updateSyntaxTheme()
         }
       })
@@ -58,7 +61,7 @@ export default function Chat(): JSX.Element {
     
     observer.observe(document.documentElement, { attributes: true })
     
-    // Cleanup
+    // Clean up
     return () => observer.disconnect()
   }, [])
 
@@ -90,4 +93,4 @@ export default function Chat(): JSX.Element {
       )}
     </div>
   )
-}
+} 

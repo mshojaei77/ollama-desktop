@@ -71,16 +71,16 @@ const MessageContainer = (): JSX.Element => {
   }
 
   return (
-    <div className="flex-1 p-4 overflow-y-auto px-20">
+    <div className="flex-1 p-4 overflow-y-auto px-20 hide-scrollbar">
       {isLoadingHistory && (
         <div className="flex justify-center my-8">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-          <span className="ml-2 text-sm text-gray-500">Loading chat history...</span>
+          <span className="ml-2 text-sm text-[hsl(var(--muted-foreground))]">Loading chat history...</span>
         </div>
       )}
 
       {historyError && (
-        <div className="mx-auto max-w-4xl my-4 p-3 border rounded-lg border-red-300 bg-red-50 text-red-700">
+        <div className="mx-auto max-w-4xl my-4 p-3 border rounded-lg border-red-300 bg-[hsl(var(--card))] text-red-700">
           <p>
             Error loading chat history:{' '}
             {historyError instanceof Error ? historyError.message : 'Unknown error'}
@@ -102,7 +102,7 @@ const MessageContainer = (): JSX.Element => {
           >
             {message.role === 'assistant' && (
               <div className="flex-shrink-0 mr-2">
-                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-600">
+                <div className="flex items-center justify-center w-8 h-8 rounded-full bg-white dark:bg-white text-blue-600 dark:text-blue-600">
                   <img
                     src={getIconPath(selectedModel)}
                     alt=""

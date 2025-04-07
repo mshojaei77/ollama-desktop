@@ -13,13 +13,13 @@ const ToggleButton = ({
   return (
     <button
       onClick={toggleSidebar}
-      className={`absolute ${isCollapsed ? '-right-12' : '-right-4'} top-4 bg-white border border-gray-200 rounded-xl p-1 shadow-md z-10`}
+      className={`absolute ${isCollapsed ? '-right-12' : '-right-4'} top-4 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-1 shadow-md z-10`}
       aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
     >
       {isCollapsed ? (
-        <PanelsLeftBottom className="h-5 w-5 text-gray-500" />
+        <PanelsLeftBottom className="h-5 w-5 text-[hsl(var(--muted-foreground))]" />
       ) : (
-        <ChevronLeft className="h-5 w-5 text-gray-500" />
+        <ChevronLeft className="h-5 w-5 text-[hsl(var(--muted-foreground))]" />
       )}
     </button>
   )

@@ -6,21 +6,24 @@ const FooterSection = (): JSX.Element => {
   const navigate = useNavigate()
 
   return (
-    <div className="p-2 space-y-1 border-t border-gray-200">
+    <div className="p-2 space-y-1 border-t border-[hsl(var(--border))]">
       <div
-        className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-gray-50"
+        className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]"
         onClick={() => navigate(Routes.MCP_SERVERS)}
       >
-        <Wrench className="h-4 w-4 mr-2 text-gray-500" />
-        <span className="text-sm text-gray-700">MCP Servers</span>
+        <Wrench className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
+        <span className="text-sm text-[hsl(var(--foreground))]">MCP Servers</span>
       </div>
-      <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-gray-50">
-        <Bot className="h-4 w-4 mr-2 text-gray-500" />
-        <span className="text-sm text-gray-700">Agents</span>
+      <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]">
+        <Bot className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
+        <span className="text-sm text-[hsl(var(--foreground))]">Agents</span>
       </div>
-      <div className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-gray-50">
-        <Settings className="h-4 w-4 mr-2 text-gray-500" />
-        <span className="text-sm text-gray-700">Settings</span>
+      <div 
+        className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]"
+        onClick={() => navigate(Routes.SETTINGS)}
+      >
+        <Settings className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
+        <span className="text-sm text-[hsl(var(--foreground))]">Settings</span>
       </div>
     </div>
   )

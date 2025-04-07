@@ -9,7 +9,7 @@
   font-size: 1.8rem;
   font-weight: 700;
   margin: 1.5rem 0 1rem;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid hsl(var(--border));
   padding-bottom: 0.25rem;
 }
 
@@ -17,7 +17,7 @@
   font-size: 1.5rem;
   font-weight: 700;
   margin: 1.4rem 0 0.8rem;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid hsl(var(--border));
   padding-bottom: 0.25rem;
 }
 
@@ -38,10 +38,10 @@
 }
 
 .markdown-content blockquote {
-  border-left: 4px solid #d1d5db;
+  border-left: 4px solid hsl(var(--muted));
   padding-left: 1rem;
   margin: 1rem 0;
-  color: #4b5563;
+  color: hsl(var(--muted-foreground));
 }
 
 .markdown-content ul, .markdown-content ol {
@@ -62,7 +62,7 @@
 }
 
 .markdown-content pre {
-  background-color: #f3f4f6;
+  background-color: hsl(var(--secondary));
   border-radius: 0.5rem;
   overflow-x: auto;
   margin: 1rem 0;
@@ -72,7 +72,7 @@
 .markdown-content code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.9rem;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: hsl(var(--secondary));
   padding: 0.2em 0.4em;
   border-radius: 0.25rem;
   border: none;
@@ -100,13 +100,13 @@
 
 .markdown-content table th,
 .markdown-content table td {
-  border: 1px solid #e5e7eb;
+  border: 1px solid hsl(var(--border));
   padding: 0.5rem;
   text-align: left;
 }
 
 .markdown-content table th {
-  background-color: #f9fafb;
+  background-color: hsl(var(--muted));
   font-weight: 600;
 }
 
@@ -114,24 +114,24 @@
   margin: 1rem 0;
   border-radius: 0.5rem;
   overflow: hidden;
-  border: 1px solid #e5e7eb;
+  border: 1px solid hsl(var(--border));
 }
 
 .code-block-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: #f3f4f6;
+  background-color: hsl(var(--secondary));
   padding: 0.5rem 1rem;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid hsl(var(--border));
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.8rem;
-  color: #4b5563;
+  color: hsl(var(--muted-foreground));
 }
 
 .code-copy-button {
   background-color: transparent;
-  border: 1px solid #d1d5db;
+  border: 1px solid hsl(var(--border));
   border-radius: 0.25rem;
   padding: 0.25rem 0.5rem;
   font-size: 0.7rem;
@@ -140,5 +140,5 @@
 }
 
 .code-copy-button:hover {
-  background-color: #e5e7eb;
+  background-color: hsl(var(--muted));
 }

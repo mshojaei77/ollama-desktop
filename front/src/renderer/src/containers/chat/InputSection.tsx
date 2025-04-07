@@ -33,7 +33,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
 
   return (
     <div className="sticky bottom-0 p-4 bg-[hsl(var(--background))]">
-      <div className="flex flex-col w-full bg-white rounded-2xl py-3 border border-gray-200 shadow-sm">
+      <div className="flex flex-col w-full bg-[hsl(var(--card))] rounded-2xl py-3 border border-[hsl(var(--border))] shadow-sm">
         <div className="px-4">
           <Input
             value={input}
@@ -41,7 +41,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
             onKeyDown={handleKeyDown}
             placeholder="Ask anything"
             disabled={isSending}
-            className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent w-full text-sm px-0 placeholder-gray-500"
+            className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent w-full text-sm px-0 placeholder-[hsl(var(--muted-foreground))]"
           />
         </div>
         
@@ -59,7 +59,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
           <div className="flex items-center gap-2 ml-auto pr-4">
             <button 
               onClick={() => setToolsEnabled(!toolsEnabled)}
-              className={`p-1.5 ${toolsEnabled ? 'text-blue-600' : 'text-gray-400'} hover:text-gray-600`}
+              className={`p-1.5 ${toolsEnabled ? 'text-blue-600' : 'text-[hsl(var(--muted-foreground))]'} hover:text-[hsl(var(--foreground))]`}
               title={toolsEnabled ? "Disable tools" : "Enable tools"}
             >
               <svg
@@ -77,7 +77,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
               </svg>
             </button>
 
-            <button className="p-1.5 text-gray-400 hover:text-gray-600">
+            <button className="p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="18"

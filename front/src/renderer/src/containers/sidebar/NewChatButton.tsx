@@ -30,7 +30,7 @@ const NewChatButton = (): JSX.Element => {
     <div className="px-4 mb-4">
       <Button
         onClick={handleNewChat}
-        className="w-full justify-start bg-white hover:bg-gray-50 text-black border border-gray-200"
+        className="w-full justify-start bg-[hsl(var(--card))] hover:bg-[hsl(var(--secondary))] text-[hsl(var(--foreground))] border border-[hsl(var(--border))]"
         disabled={isInitializing}
       >
         {isInitializing ? (

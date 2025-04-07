@@ -12,7 +12,7 @@ const Sidebar: React.FC = () => {
 
   return (
     <div
-      className={`flex flex-col h-screen bg-white transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 border-none' : 'w-64 border-r border-gray-200'} relative`}
+      className={`flex flex-col h-screen bg-[hsl(var(--card))] border-[hsl(var(--border))] transition-all duration-300 ease-in-out ${isCollapsed ? 'w-0 border-none' : 'w-64 border-r'} relative`}
     >
       <ToggleButton isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
       {!isCollapsed && (
