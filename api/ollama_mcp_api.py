@@ -14,10 +14,13 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
 import db  # Import our new database module
 from config_io import read_ollama_config, write_ollama_config
+from agents.routes import router as agents_router  # Import the agents router
+from agents.registry import agent_registry  # Import the agent registry
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -43,9 +46,25 @@ app = FastAPI(
         {
             "name": "Models",
             "description": "Operations for getting information about available models"
+        },
+        {
+            "name": "Agents",
+            "description": "Operations for working with specialized AI agents"
         }
     ]
 )
+
+# Add this right after creating the app
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, limit this to your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include the agents router
+app.include_router(agents_router)
 
 # Global state for clients and chatbots
 active_clients: Dict[str, MCPClient] = {}
@@ -155,10 +174,14 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the database on application startup"""
+    """Initialize the database and agents on application startup"""
     db.init_db()
     db.migrate_database()
     app_logger.info("Database initialized and migrated")
+    
+    # Initialize the agent registry
+    await agent_registry.initialize()
+    app_logger.info(f"Agent registry initialized with {len(agent_registry.get_all_agents())} agents")
     
     # Start Ollama on Windows platforms
     import sys
@@ -893,6 +916,15 @@ async def initialize_chat_with_mcp(request: InitializeRequest):
     except Exception as e:
         app_logger.error(f"Error initializing chat with MCP: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on application shutdown"""
+    app_logger.info("Shutting down application, cleaning up resources...")
+    
+    # Clean up agent registry resources
+    await agent_registry.cleanup()
+    app_logger.info("Agent registry cleaned up")
 
 
 # ----- Programmatic API Examples -----

@@ -32,6 +32,15 @@ export const getIconPath = (modelName: string): string => {
   }
 }
 
+export const getAgentIconPath = (agentId: string): string => {
+  try {
+    return new URL(`./assets/agents/${agentId}.png`, import.meta.url).href
+  } catch {
+    // Return a default icon if the agent icon is not found
+    return new URL('./assets/models/default.png', import.meta.url).href
+  }
+}
+
 export const getModelDisplayName = (modelName: string): string => {
   if (modelName.includes('/')) {
     return modelName.split('/')[1]
