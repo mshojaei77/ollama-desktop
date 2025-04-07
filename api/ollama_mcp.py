@@ -712,6 +712,7 @@ class MCPClient:
         Args:
             model_name: Optional model name (defaults to OLLAMA_MODEL env var or "llama3.2")
         """
+        print(f"Initializing MCPClient with model: {model_name}")
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self._streams_context = None
@@ -839,6 +840,34 @@ class MCPClient:
             await self.cleanup()
             raise  # Re-raise the exception after cleanup
 
+    async def connect_to_configured_server(self, server_name: str) -> bool:
+        """Connect to an MCP server by name from the configuration."""
+        config = await OllamaMCPPackage.load_mcp_config()
+        server_config = config["mcpServers"].get(server_name)
+        if not server_config:
+            app_logger.error(f"No configuration found for server: {server_name}")
+            return False
+
+        server_type = server_config.get("type", "stdio")
+        try:
+            if server_type == "sse":
+                server_url = server_config.get("url")
+                if not server_url:
+                    raise ValueError("SSE server URL is missing")
+                return await self.connect_to_sse_server(server_url)
+            elif server_type == "stdio":
+                command = server_config.get("command")
+                args = server_config.get("args", [])
+                if not command or not args:
+                    raise ValueError("STDIO server requires command and args")
+                return await self.connect_to_stdio_server(command, args)
+            else:
+                app_logger.error(f"Unsupported server type: {server_type}")
+                return False
+        except Exception as e:
+            app_logger.error(f"Failed to connect to {server_name}: {str(e)}")
+            return False
+
     def _is_port_in_use_error(self, error_message: str) -> bool:
         """Helper method to detect if an error is related to port conflicts"""
         port_conflict_indicators = [
@@ -920,90 +949,44 @@ class MCPClient:
             str: Response text
         """
         # Try to get tools list, with reconnection logic if needed
+        if not self.session:
+            return "Not connected to an MCP server. Please connect first."
+        
         try:
-            response = await self.session.list_tools()
-        except anyio.BrokenResourceError:
-            app_logger.warning("Connection to server lost. Attempting to reconnect...")
-            # Get the current server details from the existing session
-            # This is a simplified reconnection - you might need to adjust based on server type
-            if hasattr(self._streams_context, 'url'):  # SSE connection
-                server_url = self._streams_context.url
-                await self.cleanup()
-                await self.connect_to_sse_server(server_url)
-            else:
-                app_logger.error("Unable to automatically reconnect. Please restart the client.")
-                return "Connection to server lost. Please restart the client."
-
-            # Try again after reconnection
-            try:
-                response = await self.session.list_tools()
-            except Exception as e:
-                app_logger.error(f"Failed to reconnect to server: {str(e)}")
-                return f"Failed to reconnect to server: {str(e)}"
-
-        available_tools = response.tools
-
-        try:
-            # Generate initial response with the chatbot
-            app_logger.debug(f"Processing query with Ollama model: {self.model}")
+            tools_response = await self.session.list_tools()
+            available_tools = {tool.name: tool for tool in tools_response.tools}
+            app_logger.info(f"Available tools: {list(available_tools.keys())}")
+            
             initial_result = await self.chatbot.chat(query)
-
-            # Check for potential tool calls in the response
-            tool_results = []
             final_text = [initial_result]
-
-            # Extract potential tool calls from the text
-            # This is a simplified approach - for production use, you'd use a more robust parser
-            import re
+            
+            # Look for tool calls in the response
             tool_call_pattern = r"\{\s*\"name\":\s*\"([^\"]+)\"\s*,\s*\"arguments\":\s*(\{[^}]+\})\s*\}"
             matches = re.findall(tool_call_pattern, initial_result)
-
-            # Process any tool calls found
+            
             for tool_name, args_str in matches:
-                try:
-                    # Parse the arguments
-                    tool_args = json.loads(args_str)
-
-                    # Check if this tool exists
-                    if any(tool.name == tool_name for tool in available_tools):
-                        # Execute tool call
-                        app_logger.info(f"Calling tool: {tool_name} with args: {json.dumps(tool_args)}")
+                if tool_name in available_tools:
+                    try:
+                        tool_args = json.loads(args_str)
+                        app_logger.info(f"Executing tool {tool_name} with args: {tool_args}")
                         result = await self.session.call_tool(tool_name, tool_args)
-
-                        # Extract the content as a string from the result object
-                        if hasattr(result, 'content'):
-                            result_content = str(result.content)
-                        else:
-                            result_content = str(result)
-
+                        result_content = str(getattr(result, 'content', result))
                         tool_results.append({"call": tool_name, "result": result_content})
-                        final_text.append(f"[Called tool {tool_name} with result: {result_content}]")
-
-                        # Get final response about the tool result
-                        follow_up = f"The tool {tool_name} returned: {result_content}. Please provide your final answer based on this information."
+                        final_text.append(f"[Tool {tool_name} result: {result_content}]")
+                        
+                        # Follow-up with the chatbot
+                        follow_up = f"Tool {tool_name} returned: {result_content}. Provide your final answer."
                         final_response = await self.chatbot.chat(follow_up)
                         final_text.append(final_response)
-                except Exception as e:
-                    error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                    app_logger.error(error_msg)
-                    final_text.append(error_msg)
-
+                    except Exception as e:
+                        final_text.append(f"[Error calling tool {tool_name}: {str(e)}]")
+                else:
+                    final_text.append(f"[Tool {tool_name} not available]")
+            
             return "\n".join(final_text)
-
         except Exception as e:
-            error_msg = str(e)
-
-            # Check for server connection issues (502 status code)
-            if "status code: 502" in error_msg:
-                # Extract server information from environment
-                server_url = os.getenv("OLLAMA_HOST", "localhost:11434")
-                error_message = f"Your local Ollama server at {server_url} is busy by other app or proxy"
-                app_logger.error(f"Error in process_query: {error_message}")
-                return error_message
-
-            # For other errors, log the full error
-            app_logger.error(f"Error in process_query: {error_msg}")
-            return f"An error occurred: {error_msg}"
+            app_logger.error(f"Error in process_query: {str(e)}")
+            return f"Error: {str(e)}"
 
     async def process_direct_query(self, query: str) -> str:
         """
@@ -1184,17 +1167,14 @@ class OllamaMCPPackage:
         try:
             from api.config_io import read_ollama_config
             config = read_ollama_config()
-
-            if config and 'mcpServers' in config:
-                return config
-            else:
-                app_logger.warning("No MCP servers found in configuration or configuration could not be loaded.")
+            if not config or not isinstance(config, dict):
+                app_logger.warning("Invalid or missing config, initializing with default.")
                 return {"mcpServers": {}}
-        except ImportError:
-            app_logger.error("Could not import config_io module. Please ensure it exists in the same directory.")
-            return {"mcpServers": {}}
+            if "mcpServers" not in config:
+                config["mcpServers"] = {}
+            return config
         except Exception as e:
-            app_logger.error(f"Error loading configuration: {str(e)}")
+            app_logger.error(f"Error loading MCP config: {str(e)}")
             return {"mcpServers": {}}
 
     @staticmethod

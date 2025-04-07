@@ -122,10 +122,10 @@ class InitializeResponse(BaseModel):
     model: str
 
 class MCPServerConnectRequest(BaseModel):
-    server_type: str  # "sse" or "stdio"
-    server_url: Optional[str] = None  # For SSE
-    command: Optional[str] = None     # For STDIO
-    args: Optional[List[str]] = None  # For STDIO
+    server_type: str  # "sse", "stdio", or "config"
+    server_url: Optional[str] = None  # For SSE or server name for config
+    command: Optional[str] = None
+    args: Optional[List[str]] = None
     session_id: Optional[str] = None
     model_name: str = "llama3.2"
 
@@ -430,54 +430,33 @@ async def connect_to_mcp(request: MCPServerConnectRequest):
     - Creates a new MCP client with the specified model
     - Returns a session ID for subsequent interactions
     """
-    try:
-        session_id = request.session_id or generate_session_id()
-        
-        # Clean up existing session if it exists
-        if session_id in active_clients:
-            await cleanup_session(session_id)
-        
-        # Create MCP client
-        client = await OllamaMCPPackage.create_client(model_name=request.model_name)
-        
-        # Connect to server based on type
-        if request.server_type == "sse":
-            if not request.server_url:
-                raise HTTPException(status_code=400, detail="server_url is required for SSE connections")
-            
-            await client.connect_to_sse_server(server_url=request.server_url)
-        
-        elif request.server_type == "stdio":
-            if not request.command or not request.args:
-                raise HTTPException(status_code=400, detail="command and args are required for STDIO connections")
-            
-            await client.connect_to_stdio_server(command=request.command, args=request.args)
-        
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported server type: {request.server_type}")
-        
-        # Store in active clients
-        active_clients[session_id] = client
-        
-        # Save to database
-        await db.create_session(
-            session_id=session_id,
-            model_name=request.model_name,
-            session_type="mcp_client"
-        )
-        
-        return InitializeResponse(
-            session_id=session_id,
-            status="connected",
-            model=request.model_name
-        )
-    except HTTPException as http_exc:
-        # Re-raise HTTPExceptions directly so FastAPI handles them correctly
-        raise http_exc
-    except Exception as e:
-        app_logger.error(f"Error connecting to MCP server: {str(e)}")
-        # Handle other unexpected errors as 500
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    session_id = request.session_id or generate_session_id()
+    if session_id in active_clients:
+        await cleanup_session(session_id)
+    
+    client = await OllamaMCPPackage.create_client(model_name=request.model_name)
+    
+    success = False
+    if request.server_type == "config" and request.server_url:  # Assuming server_url holds server_name
+        success = await client.connect_to_configured_server(request.server_url)
+    elif request.server_type == "sse":
+        if not request.server_url:
+            raise HTTPException(status_code=400, detail="server_url required for SSE")
+        success = await client.connect_to_sse_server(request.server_url)
+    elif request.server_type == "stdio":
+        if not request.command or not request.args:
+            raise HTTPException(status_code=400, detail="command and args required for STDIO")
+        success = await client.connect_to_stdio_server(request.command, request.args)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported server type: {request.server_type}")
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to connect to MCP server")
+    
+    active_clients[session_id] = client
+    await db.create_session(session_id=session_id, model_name=request.model_name, session_type="mcp_client")
+    
+    return InitializeResponse(session_id=session_id, status="connected", model=request.model_name)
 
 @app.post("/mcp/query", response_model=ChatResponse)
 async def process_mcp_query(request: ChatRequest):
@@ -1044,6 +1023,17 @@ async def initialize_chat_with_mcp(request: InitializeRequest):
         app_logger.error(f"Error initializing chat with MCP: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+@app.get("/mcp/test-tools", tags=["MCP"])
+async def test_mcp_tools(session_id: str):
+    if session_id not in active_clients:
+        raise HTTPException(status_code=404, detail="Session not found")
+    client = active_clients[session_id]
+    try:
+        tools_response = await client.session.list_tools()
+        return {"tools": [tool.name for tool in tools_response.tools]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing tools: {str(e)}")
+        
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up resources on application shutdown"""
