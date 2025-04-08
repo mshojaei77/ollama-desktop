@@ -157,9 +157,9 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full bg-background shadow-lg rounded-lg overflow-hidden">
       {/* Header */}
-      <div className="flex items-center p-4 border-b border-border">
+      <div className="flex items-center p-4 border-b border-border bg-primary text-primary-foreground">
         <button 
           onClick={onBack}
           className="mr-3 text-muted-foreground hover:text-foreground transition-colors"
@@ -172,7 +172,7 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
             <img 
               src={getAgentIconPath(agent.id)}
               alt={agent.name}
-              className="w-8 h-8 rounded-full mr-3"
+              className="w-10 h-10 rounded-full mr-3"
               onError={(e) => {
                 // If icon from local assets fails, try the URL from agent metadata
                 // Add size parameters for better resolution if it's an external URL
@@ -198,7 +198,7 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
       </div>
       
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background-light">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <h3 className="text-xl font-semibold text-foreground mb-2">
@@ -271,7 +271,7 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
       </div>
       
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-border">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-background-light">
         <div className="flex items-center relative">
           <textarea
             ref={inputRef}
@@ -279,7 +279,7 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
             onChange={handleInputChange}
             onKeyDown={handleKeyPress}
             placeholder="Type a message..."
-            className="flex-1 bg-background border border-border rounded-md py-2 pl-3 pr-10 resize-none max-h-[120px] min-h-[44px]"
+            className="flex-1 bg-background border border-border rounded-md py-2 pl-3 pr-10 resize-none max-h-[120px] min-h-[44px] shadow-inner"
             rows={1}
             disabled={isLoading}
             style={{
