@@ -14,20 +14,23 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      // Allow CORS requests in development mode
-      webSecurity: !is.dev
+      // Always enable web security even in development
+      webSecurity: true,
+      // Disable insecure content
+      allowRunningInsecureContent: false
     }
   })
-  mainWindow.webContents.openDevTools()
+  // Only open DevTools in development mode
+  if (is.dev) {
+    mainWindow.webContents.openDevTools()
+  }
 
-  // Set CSP headers to allow API connections
+  // Set CSP headers with proper security configurations
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self'; connect-src 'self' http://localhost:8000; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
-        ]
+        'Content-Security-Policy': "default-src 'self'; connect-src 'self' http://localhost:8000; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://via.placeholder.com https://res.cloudinary.com;"
       }
     })
   })

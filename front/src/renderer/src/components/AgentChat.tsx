@@ -169,7 +169,18 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
               className="w-8 h-8 rounded-full mr-3"
               onError={(e) => {
                 // If icon from local assets fails, try the URL from agent metadata
-                (e.target as HTMLImageElement).src = agent.icon || 'https://via.placeholder.com/200?text=' + encodeURIComponent(agent.name[0]);
+                // Add size parameters for better resolution if it's an external URL
+                const iconUrl = agent.icon || '';
+                if (iconUrl.includes('placeholder.com')) {
+                  // If already a placeholder URL, ensure high resolution
+                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
+                } else if (iconUrl.startsWith('http')) {
+                  // For other URLs, try to use as is
+                  (e.target as HTMLImageElement).src = iconUrl;
+                } else {
+                  // Create high-res placeholder as last resort
+                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
+                }
               }}
             />
             <div>
@@ -197,6 +208,30 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
               key={index}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
+              {message.role === 'agent' && agent && (
+                <div className="flex-shrink-0 mr-2 self-end">
+                  <img 
+                    src={getAgentIconPath(agent.id)}
+                    alt={agent.name}
+                    className="w-8 h-8 rounded-full"
+                    onError={(e) => {
+                      // If icon from local assets fails, try the URL from agent metadata
+                      // Add size parameters for better resolution if it's an external URL
+                      const iconUrl = agent.icon || '';
+                      if (iconUrl.includes('placeholder.com')) {
+                        // If already a placeholder URL, ensure high resolution
+                        (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
+                      } else if (iconUrl.startsWith('http')) {
+                        // For other URLs, try to use as is
+                        (e.target as HTMLImageElement).src = iconUrl;
+                      } else {
+                        // Create high-res placeholder as last resort
+                        (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
+                      }
+                    }}
+                  />
+                </div>
+              )}
               <div 
                 className={`max-w-[80%] rounded-lg p-3 ${
                   message.role === 'user' 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, ChevronDown, Tag, MessageSquare, RefreshCw } from 'lucide-react'
+import { Search, ChevronDown, Tag, RefreshCw } from 'lucide-react'
 import agentService, { Agent } from '../services/agentService'
 import AgentChat from '../components/AgentChat'
 import { getAgentIconPath } from '../utils'
@@ -57,8 +57,19 @@ function Agents(): JSX.Element {
   }
 
   // Open chat with an agent
-  const handleOpenChat = (agentId: string) => {
+  const handleOpenChat = (agentId: string, e?: React.MouseEvent) => {
+    // If the click was on a tag, prevent opening the chat
+    if (e?.target instanceof HTMLElement && 
+       (e.target.closest('.agent-tag') || e.target.closest('.agent-tag-wrapper'))) {
+      return;
+    }
     setSelectedAgent(agentId)
+  }
+
+  // Handle tag click
+  const handleTagClick = (tag: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedTag(tag)
   }
 
   // Go back to agent list
@@ -162,45 +173,59 @@ function Agents(): JSX.Element {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredAgents.map(agent => (
-            <div key={agent.id} className="bg-card border border-border rounded-lg overflow-hidden flex flex-col hover:border-primary/50 transition-colors">
-              <div className="flex items-center space-x-4 p-4">
-                <div className="flex-shrink-0">
-                  <img 
-                    src={getAgentIconPath(agent.id)} 
-                    alt={agent.name} 
-                    className="w-12 h-12 rounded-full object-cover border border-border"
-                    onError={(e) => {
-                      // If icon from local assets fails, try the URL from agent metadata
-                      (e.target as HTMLImageElement).src = agent.icon || 'https://via.placeholder.com/200?text=' + encodeURIComponent(agent.name[0]);
-                    }}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-foreground font-medium truncate">{agent.name}</p>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {agent.tags.map(tag => (
-                      <span 
-                        key={tag} 
-                        className="inline-flex items-center text-xs bg-accent/30 text-muted-foreground px-2 py-0.5 rounded cursor-pointer hover:bg-accent/50"
-                        onClick={() => setSelectedTag(tag)}
-                      >
-                        <Tag size={10} className="mr-1" /> {tag}
-                      </span>
-                    ))}
+            <div 
+              key={agent.id} 
+              className="bg-card border border-border rounded-lg overflow-hidden flex flex-col hover:border-primary hover:shadow-md hover:shadow-primary/10 transition-all cursor-pointer transform hover:-translate-y-1"
+              onClick={(e) => handleOpenChat(agent.id, e)}
+            >
+              <div className="p-5">
+                <div className="flex items-center space-x-4 mb-3">
+                  <div className="flex-shrink-0">
+                    <img 
+                      src={getAgentIconPath(agent.id)} 
+                      alt={agent.name} 
+                      className="w-14 h-14 rounded-full object-cover border border-border shadow-sm"
+                      loading="eager"
+                      decoding="async"
+                      onError={(e) => {
+                        // If icon from local assets fails, try the URL from agent metadata
+                        // Add size parameters for better resolution if it's an external URL
+                        const iconUrl = agent.icon || '';
+                        if (iconUrl.includes('placeholder.com')) {
+                          // If already a placeholder URL, ensure high resolution
+                          (e.target as HTMLImageElement).src = `https://via.placeholder.com/512x512?text=${encodeURIComponent(agent.name[0])}`;
+                        } else if (iconUrl.startsWith('http')) {
+                          // For other URLs, try to use as is with quality parameters if possible
+                          const url = new URL(iconUrl);
+                          if (url.hostname.includes('cloudinary')) {
+                            // Add quality parameters for Cloudinary
+                            (e.target as HTMLImageElement).src = `${iconUrl}/q_auto:best`;
+                          } else {
+                            (e.target as HTMLImageElement).src = iconUrl;
+                          }
+                        } else {
+                          // Create high-res placeholder as last resort
+                          (e.target as HTMLImageElement).src = `https://via.placeholder.com/512x512?text=${encodeURIComponent(agent.name[0])}&quality=100`;
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-foreground font-medium truncate text-lg">{agent.name}</p>
+                    <div className="flex flex-wrap gap-1 mt-2 agent-tag-wrapper">
+                      {agent.tags.map(tag => (
+                        <span 
+                          key={tag} 
+                          className="agent-tag inline-flex items-center text-xs bg-accent/30 text-muted-foreground px-2 py-0.5 rounded cursor-pointer hover:bg-accent/50"
+                          onClick={(e) => handleTagClick(tag, e)}
+                        >
+                          <Tag size={10} className="mr-1" /> {tag}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="p-4 flex-1">
                 <p className="text-sm text-muted-foreground">{agent.description}</p>
-              </div>
-              <div className="p-4 border-t border-border">
-                <button 
-                  onClick={() => handleOpenChat(agent.id)}
-                  className="w-full py-2 px-4 bg-primary/10 hover:bg-primary/20 text-primary rounded-md flex items-center justify-center transition-colors"
-                >
-                  <MessageSquare size={16} className="mr-2" />
-                  Chat with {agent.name.split(' ')[0]}
-                </button>
               </div>
             </div>
           ))}

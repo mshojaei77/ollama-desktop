@@ -26,21 +26,44 @@ export default function Chat(): JSX.Element {
     const updateSyntaxTheme = () => {
       const isDarkMode = document.documentElement.classList.contains('dark')
       
-      // Create or update the highlight.js link
-      let linkElement = document.getElementById('highlight-theme') as HTMLLinkElement
+      // Instead of loading external stylesheets that trigger CSP errors,
+      // add inline styles for syntax highlighting
+      const styleElement = document.getElementById('highlight-theme-style') || document.createElement('style')
+      styleElement.id = 'highlight-theme-style'
       
-      if (!linkElement) {
-        linkElement = document.createElement('link')
-        linkElement.rel = 'stylesheet'
-        linkElement.id = 'highlight-theme'
-        document.head.appendChild(linkElement)
+      // Basic styles for code highlighting that won't trigger CSP errors
+      if (isDarkMode) {
+        styleElement.textContent = `
+          pre code.hljs { display: block; overflow-x: auto; padding: 1em; }
+          code.hljs { padding: 3px 5px; }
+          .hljs { color: #e6e6e6; background: #1f1f1f; }
+          .hljs-comment, .hljs-quote { color: #7f7f7f; }
+          .hljs-keyword, .hljs-selector-tag { color: #cc99cd; }
+          .hljs-string, .hljs-attr { color: #7ec699; }
+          .hljs-number, .hljs-literal { color: #f08d49; }
+          .hljs-title, .hljs-section, .hljs-selector-id { color: #f8c555; }
+          .hljs-tag, .hljs-name { color: #e2777a; }
+          .hljs-attribute { color: #7ec699; }
+          .hljs-regexp, .hljs-link { color: #e2777a; }
+        `
+      } else {
+        styleElement.textContent = `
+          pre code.hljs { display: block; overflow-x: auto; padding: 1em; }
+          code.hljs { padding: 3px 5px; }
+          .hljs { color: #24292e; background: #f8f8f8; }
+          .hljs-comment, .hljs-quote { color: #6a737d; }
+          .hljs-keyword, .hljs-selector-tag { color: #d73a49; }
+          .hljs-string, .hljs-attr { color: #032f62; }
+          .hljs-number, .hljs-literal { color: #005cc5; }
+          .hljs-title, .hljs-section, .hljs-selector-id { color: #6f42c1; }
+          .hljs-tag, .hljs-name { color: #22863a; }
+          .hljs-attribute { color: #6f42c1; }
+          .hljs-regexp, .hljs-link { color: #e36209; }
+        `
       }
       
-      // Set appropriate theme
-      if (isDarkMode) {
-        linkElement.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css'
-      } else {
-        linkElement.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css'
+      if (!styleElement.parentNode) {
+        document.head.appendChild(styleElement)
       }
     }
     
@@ -59,7 +82,11 @@ export default function Chat(): JSX.Element {
     observer.observe(document.documentElement, { attributes: true })
     
     // Cleanup
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      const styleElement = document.getElementById('highlight-theme-style')
+      if (styleElement) styleElement.remove()
+    }
   }, [])
 
   if (apiConnected === false) {
