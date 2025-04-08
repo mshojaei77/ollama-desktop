@@ -41,7 +41,10 @@ const fetchModels = async (): Promise<string[]> => {
 
 const initializeChat = async (params: InitializeChatParams): Promise<InitializeChatResponse> => {
   try {
-    const { data } = await apiClient.post<InitializeChatResponse>('/chat/initialize', params)
+    const { data } = await apiClient.post<InitializeChatResponse>(
+      '/chat/initialize-with-mcp',
+      params
+    )
     return data
   } catch (error) {
     console.error('Error initializing chat:', error)
@@ -127,7 +130,7 @@ const sendMessage = async (
   onStreamUpdate?: (chunk: string) => void
 ): Promise<SendMessageResponse> => {
   try {
-    const url = `${apiClient.defaults.baseURL}/chat/message/stream`
+    const url = `${apiClient.defaults.baseURL}/mcp/query/stream`
 
     const response = await createFetchStream(
       url,

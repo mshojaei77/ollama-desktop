@@ -20,33 +20,35 @@ export default function Chat(): JSX.Element {
 
     checkConnection()
   }, [])
-  
+
   // Apply appropriate syntax highlighting styles based on theme
   useEffect(() => {
-    const updateSyntaxTheme = () => {
+    const updateSyntaxTheme = (): void => {
       const isDarkMode = document.documentElement.classList.contains('dark')
-      
+
       // Create or update the highlight.js link
       let linkElement = document.getElementById('highlight-theme') as HTMLLinkElement
-      
+
       if (!linkElement) {
         linkElement = document.createElement('link')
         linkElement.rel = 'stylesheet'
         linkElement.id = 'highlight-theme'
         document.head.appendChild(linkElement)
       }
-      
+
       // Set appropriate theme
       if (isDarkMode) {
-        linkElement.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css'
+        linkElement.href =
+          'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github-dark.min.css'
       } else {
-        linkElement.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css'
+        linkElement.href =
+          'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css'
       }
     }
-    
+
     // Initial setup
     updateSyntaxTheme()
-    
+
     // Listen for theme changes
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
@@ -55,11 +57,10 @@ export default function Chat(): JSX.Element {
         }
       })
     })
-    
+
     observer.observe(document.documentElement, { attributes: true })
-    
     // Cleanup
-    return () => observer.disconnect()
+    return (): void => observer.disconnect()
   }, [])
 
   if (apiConnected === false) {
