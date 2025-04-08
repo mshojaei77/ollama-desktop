@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Send, Paperclip, Image } from 'lucide-react';
+import { ArrowLeft, Send, Paperclip, Image, RefreshCw } from 'lucide-react';
 import agentService, { Agent } from '../services/agentService';
 import { getAgentIconPath } from '../utils';
 
 interface Message {
+  id: string;
   role: 'user' | 'agent';
   content: string;
   isLoading?: boolean;
@@ -21,6 +22,7 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Load agent details
   useEffect(() => {
@@ -46,97 +48,116 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
     inputRef.current?.focus();
   }, []);
 
-  // Handle message submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!input.trim() || isLoading) return;
-    
-    // Add user message to chat
-    const userMessage: Message = { role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
-    
-    // Clear input and set loading state
-    setInput('');
+  // Cleanup event source on unmount
+  useEffect(() => {
+    return () => {
+      eventSourceRef.current?.close();
+    };
+  }, []);
+
+  // Function to handle streaming agent response
+  const startAgentResponseStream = (prompt: string) => {
+    if (isLoading) return;
+
+    // Close any existing stream
+    eventSourceRef.current?.close();
     setIsLoading(true);
-    
-    // Add placeholder for agent response
-    setMessages(prev => [...prev, { role: 'agent', content: '', isLoading: true }]);
-    
-    // Create an event source
-    const eventSource = agentService.streamMessage(agentId, { message: input });
-    
-    // Handle incoming messages
+
+    const placeholderId = crypto.randomUUID();
+    // Add placeholder message
+    setMessages(prev => [...prev, { id: placeholderId, role: 'agent', content: '', isLoading: true }]);
+
+    const eventSource = agentService.streamMessage(agentId, { message: prompt });
+    eventSourceRef.current = eventSource;
+
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
+
         if (data.done) {
-          // Streaming complete
+          // Streaming complete - update message isLoading flag
+          setMessages(prev => prev.map(msg =>
+            msg.id === placeholderId ? { ...msg, isLoading: false } : msg
+          ));
           eventSource.close();
           setIsLoading(false);
+          eventSourceRef.current = null;
         } else if (data.text) {
-          // Update the streaming response
-          setMessages(prev => {
-            const updatedMessages = [...prev];
-            const lastMessageIndex = updatedMessages.length - 1;
-            
-            // Update the last message, which is the agent's response
-            const currentContent = updatedMessages[lastMessageIndex].content;
-            updatedMessages[lastMessageIndex] = {
-              role: 'agent',
-              content: currentContent + data.text
-            };
-            
-            return updatedMessages;
-          });
+          // Update the streaming response by ID
+          setMessages(prev => prev.map(msg =>
+            msg.id === placeholderId ? { ...msg, content: msg.content + data.text, isLoading: true } : msg
+          ));
         } else if (data.error) {
-          // Handle error
+          // Handle error - update message content and isLoading flag
           console.error('Error from agent:', data.error);
-          setMessages(prev => {
-            const updatedMessages = [...prev];
-            const lastMessageIndex = updatedMessages.length - 1;
-            
-            updatedMessages[lastMessageIndex] = {
-              role: 'agent',
-              content: 'Sorry, I encountered an error processing your request.'
-            };
-            
-            return updatedMessages;
-          });
-          
+          setMessages(prev => prev.map(msg =>
+            msg.id === placeholderId ? { ...msg, content: 'Sorry, I encountered an error processing your request.', isLoading: false } : msg
+          ));
           eventSource.close();
           setIsLoading(false);
+          eventSourceRef.current = null;
         }
       } catch (error) {
         console.error('Error parsing SSE message:', error, event.data);
+         // Handle parsing error - update message content and isLoading flag
+         setMessages(prev => prev.map(msg =>
+           msg.id === placeholderId ? { ...msg, content: 'Sorry, I encountered an error receiving the response.', isLoading: false } : msg
+         ));
+         eventSource.close();
+         setIsLoading(false);
+         eventSourceRef.current = null;
       }
     };
-    
-    // Handle errors
+
     eventSource.onerror = (error) => {
       console.error('EventSource error:', error);
-      
-      setMessages(prev => {
-        const updatedMessages = [...prev];
-        const lastMessageIndex = updatedMessages.length - 1;
-        
-        updatedMessages[lastMessageIndex] = {
-          role: 'agent',
-          content: 'Sorry, I encountered a connection error. Please try again.'
-        };
-        
-        return updatedMessages;
-      });
-      
+      // Handle connection error - update message content and isLoading flag
+      setMessages(prev => prev.map(msg =>
+        msg.id === placeholderId ? { ...msg, content: 'Sorry, I encountered a connection error. Please try again.', isLoading: false } : msg
+      ));
       eventSource.close();
       setIsLoading(false);
+      eventSourceRef.current = null;
     };
-    
-    // Clean up event source when component unmounts
-    return () => {
-      eventSource.close();
-    };
+  };
+
+  // Handle message submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedInput = input.trim();
+    if (!trimmedInput || isLoading) return;
+
+    // Add user message to chat
+    const userMessage: Message = { id: crypto.randomUUID(), role: 'user', content: trimmedInput };
+    setMessages(prev => [...prev, userMessage]);
+
+    // Clear input
+    setInput('');
+
+    // Start agent response stream
+    startAgentResponseStream(trimmedInput);
+  };
+
+  // Handle regeneration request
+  const handleRegenerate = (agentMsgId: string) => {
+    if (isLoading) return;
+
+    const agentMsgIndex = messages.findIndex(msg => msg.id === agentMsgId);
+
+    // Ensure the message exists and has a preceding user message
+    if (agentMsgIndex < 1 || messages[agentMsgIndex - 1]?.role !== 'user') {
+      console.error("Cannot regenerate: No preceding user message found.");
+      return;
+    }
+
+    const userMessage = messages[agentMsgIndex - 1];
+    const userPrompt = userMessage.content;
+
+    // Remove the agent message to be regenerated and any subsequent messages
+    setMessages(prev => prev.slice(0, agentMsgIndex));
+
+    // Start a new agent response stream with the original user prompt
+    startAgentResponseStream(userPrompt);
   };
 
   // Handle input changes and adjust textarea height
@@ -275,13 +296,13 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
             )}
           </div>
         ) : (
-          messages.map((message, index) => (
+          messages.map((message) => (
             <div 
-              key={index}
+              key={message.id}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               {message.role === 'agent' && agent && (
-                <div className="flex-shrink-0 mr-2 self-end">
+                <div className="flex-shrink-0 mr-2 self-end mb-1">
                   <img 
                     src={getAgentIconPath(agent.id)}
                     alt={agent.name}
@@ -305,29 +326,46 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
                 </div>
               )}
               <div 
-                className={`max-w-[80%] rounded-lg p-3 ${
-                  message.role === 'user' 
-                    ? 'bg-primary text-primary-foreground' 
-                    : 'bg-muted text-foreground'
-                }`}
+                className={`max-w-[80%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}
               >
-                {message.isLoading ? (
-                  <div className="flex space-x-2 items-center">
-                    <div className="w-2 h-2 bg-current rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                    <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-                  </div>
-                ) : (
-                  <p 
-                    className="whitespace-pre-wrap"
-                    style={{
-                      fontFamily: containsRTLText(message.content) ? "'Vazir', sans-serif" : 'inherit',
-                      direction: containsRTLText(message.content) ? 'rtl' : 'ltr',
-                      textAlign: containsRTLText(message.content) ? 'right' : 'left'
-                    }}
+                <div
+                  className={`rounded-lg p-3 ${
+                    message.role === 'user' 
+                      ? 'bg-primary text-primary-foreground' 
+                      : 'bg-muted text-foreground'
+                  }`}
+                >
+                  {message.isLoading && message.role === 'agent' ? (
+                    <div className="flex space-x-2 items-center">
+                      <div className="w-2 h-2 bg-current rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                    </div>
+                  ) : (
+                    <p 
+                      className="whitespace-pre-wrap"
+                      style={{
+                        fontFamily: containsRTLText(message.content) ? "'Vazir', sans-serif" : 'inherit',
+                        direction: containsRTLText(message.content) ? 'rtl' : 'ltr',
+                        textAlign: containsRTLText(message.content) ? 'right' : 'left'
+                      }}
+                    >
+                      {message.content}
+                    </p>
+                  )}
+                </div>
+
+                {/* Regenerate Button (only for completed agent messages) */}
+                {message.role === 'agent' && !message.isLoading && (
+                  <button
+                    onClick={() => handleRegenerate(message.id)}
+                    disabled={isLoading} // Disable if global loading state is true
+                    className="mt-1 p-1 text-muted-foreground hover:text-primary disabled:text-gray-400 disabled:cursor-not-allowed flex items-center rounded-md hover:bg-muted/50 transition-colors" // Removed gap-1
+                    aria-label="Regenerate response"
                   >
-                    {message.content}
-                  </p>
+                    <RefreshCw size={12} />
+                    {/* Removed the "Regenerate" text */}
+                  </button>
                 )}
               </div>
             </div>
@@ -338,22 +376,23 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
       
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 bg-background-light">
-        <div className="flex items-center gap-2 bg-background rounded-full py-1 px-3 shadow-inner border border-border/30">
+        <div className="flex items-end gap-2 bg-background rounded-lg py-1 px-3 shadow-inner border border-border/30">
           <textarea
             ref={inputRef}
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyPress}
             placeholder="Ask anything"
-            className="flex-1 bg-transparent focus:outline-none text-foreground placeholder-muted-foreground resize-none overflow-hidden max-h-[120px] py-1 min-h-[28px] mt-5 flex items-center"
+            className="flex-1 bg-transparent focus:outline-none text-foreground placeholder-muted-foreground resize-none overflow-hidden max-h-[120px] py-1.5 min-h-[28px] self-center"
             disabled={isLoading}
+            rows={1}
             style={{
               fontFamily: containsRTLText(input) ? "'Vazir', sans-serif" : 'inherit',
               direction: containsRTLText(input) ? 'rtl' : 'ltr',
-              textAlign: containsRTLText(input) ? 'right' : 'left'
+              textAlign: containsRTLText(input) ? 'right' : 'left',
             }}
           />
-          <div className="flex-shrink-0 flex items-center space-x-0.5">
+          <div className="flex-shrink-0 flex items-center space-x-0.5 mb-0.5">
             <button
               type="button"
               disabled={isLoading}

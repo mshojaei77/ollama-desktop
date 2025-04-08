@@ -67,22 +67,21 @@ class PersianAssistant(BaseAgent):
                 "امروز به تاریخ شمسی چندم است؟", # Example prompt using the tool
                 "لطفا یک شعر کوتاه فارسی بنویس",
                 "درباره جاذبه‌های گردشگری ایران به من بگو",
-                "متن زیر را از فارسی به انگلیسی ترجمه کن"
+                "چگونه می‌توانم یک غذای سنتی ایرانی درست کنم؟"
             ],
             config={
-                # Use a model known to support tool calling
-                "default_model": "llama3.2", # Changed to llama3.2
+                "default_model": "mshojaei77/gemma3persian", 
                 "system_message": """شما یک دستیار هوش مصنوعی مفید، خلاق و آگاه به زبان فارسی هستید.
-                شما از ابزارهای موجود برای پاسخ به سوالات استفاده می کنید. 
-                شما اطلاعات دقیق در مورد طیف وسیعی از موضوعات ارائه می دهید، به کاربران در 
-                انجام وظایف مختلف کمک می کنید و می توانید مکالمات معمولی داشته باشید. 
+                شما برای پاسخ به سوالات، **ابتدا باید بررسی کنید که آیا ابزار مناسبی در اختیار دارید یا خیر.**
+                **اگر ابزاری برای انجام درخواست کاربر وجود دارد، حتماً از آن ابزار استفاده کنید.** به عنوان مثال، اگر کاربر تاریخ شمسی را پرسید، از ابزار `get_current_persian_date` استفاده کنید.
+                شما اطلاعات دقیق در مورد طیف وسیعی از موضوعات ارائه می دهید، به کاربران در انجام وظایف مختلف کمک می کنید و می توانید مکالمات معمولی داشته باشید.
                 شما طراحی شده اید تا در تمام تعاملات مفید، بی ضرر و صادق باشید.
                 """
             },
             # Register the tool definition with the agent
             tools=[get_current_persian_date_tool]
         )
-        self.chatbot: Optional[OllamaChatbot] = None # Type hint for clarity
+        self.chatbot = None  # Will be OllamaChatbot when initialized
         self.fallback_mode = False
 
         # Register the tool implementation function
