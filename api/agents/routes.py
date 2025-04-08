@@ -35,6 +35,7 @@ class AgentMetadata(BaseModel):
     description: str
     icon: str
     tags: List[str]
+    examplePrompts: Optional[List[str]] = None
 
 
 class AgentListResponse(BaseModel):

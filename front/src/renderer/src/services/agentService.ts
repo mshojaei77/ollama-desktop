@@ -10,6 +10,7 @@ export interface Agent {
   description: string;
   icon: string;
   tags: string[];
+  examplePrompts?: string[]; // Example prompts specific to each agent
 }
 
 export interface AgentListResponse {

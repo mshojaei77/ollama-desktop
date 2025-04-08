@@ -1,4 +1,4 @@
-import { Wrench, Settings, Bot } from 'lucide-react'
+import { Plug, Settings, Bot } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Routes } from '../../lib/routes'
 
@@ -11,7 +11,7 @@ const FooterSection = (): JSX.Element => {
         className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]"
         onClick={() => navigate(Routes.MCP_SERVERS)}
       >
-        <Wrench className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
+        <Plug className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
         <span className="text-sm text-[hsl(var(--foreground))]">MCP Servers</span>
       </div>
       <div 

@@ -4,10 +4,12 @@ import { useChatStore } from '@renderer/store/chatStore'
 import { useModels, useSendMessage } from '@renderer/fetch/queries'
 import { useState, useRef } from 'react'
 import { toast } from 'sonner'
-import { X, Loader2 } from 'lucide-react'
+import { X, Loader2, Image, Plug } from 'lucide-react'
 
 // Define allowed file types
 const ALLOWED_FILE_TYPES = ['.txt', '.md', '.pdf']
+const ALLOWED_IMAGE_TYPES = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
+const ALL_ALLOWED_TYPES = [...ALLOWED_FILE_TYPES, ...ALLOWED_IMAGE_TYPES]
 
 // Interface for uploaded file info
 interface UploadedFile {
@@ -60,9 +62,13 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
     const file = files[0]
     const extension = '.' + file.name.split('.').pop()?.toLowerCase()
 
-    // Validate file type
-    if (!ALLOWED_FILE_TYPES.includes(extension)) {
-      toast.error(`Unsupported file type. Please upload a ${ALLOWED_FILE_TYPES.join(', ')} file.`)
+    // Validate file type (allow documents and images)
+    if (!ALL_ALLOWED_TYPES.includes(extension)) {
+      toast.error(
+        `Unsupported file type. Please upload a ${ALLOWED_FILE_TYPES.join(
+          ', '
+        )} or ${ALLOWED_IMAGE_TYPES.join(', ')} file.`
+      )
       return
     }
 
@@ -166,19 +172,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
               className={`p-1.5 ${toolsEnabled ? 'text-blue-600' : 'text-[hsl(var(--muted-foreground))]'} hover:text-[hsl(var(--foreground))]`}
               title={toolsEnabled ? "Disable tools" : "Enable tools"}
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-              </svg>
+              <Plug size={18} />
             </button>
 
             {/* File upload input and button */}
@@ -187,7 +181,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
               ref={fileInputRef} 
               onChange={handleFileUpload} 
               className="hidden" 
-              accept=".txt,.md,.pdf"
+              accept={ALL_ALLOWED_TYPES.join(',')}
             />
             <div 
               className="relative"
@@ -198,7 +192,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
                 onClick={handleAttachmentClick}
                 disabled={isUploading || !sessionId || !apiConnected}
                 className="p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] disabled:opacity-50 relative"
-                title="Upload a file as context (.txt, .md, .pdf)"
+                title={`Upload a document (${ALLOWED_FILE_TYPES.join(', ')})`}
               >
                 {isUploading ? (
                   <Loader2 size={18} className="animate-spin" />
@@ -218,12 +212,21 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
                   </svg>
                 )}
               </button>
-              {showTooltip && (
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-slate-800 text-white text-xs rounded shadow-lg whitespace-nowrap z-50">
-                  Upload a file as context (.txt, .md, .pdf)
-                </div>
-              )}
             </div>
+
+            {/* Image upload button */}
+            <button
+              onClick={handleAttachmentClick}
+              disabled={isUploading || !sessionId || !apiConnected}
+              className="p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] disabled:opacity-50"
+              title={`Upload an image (${ALLOWED_IMAGE_TYPES.join(', ')})`}
+            >
+              {isUploading ? (
+                 <Loader2 size={18} className="animate-spin" />
+               ) : (
+                <Image size={18} />
+               )}
+            </button>
 
             <button
               onClick={sendMessage}

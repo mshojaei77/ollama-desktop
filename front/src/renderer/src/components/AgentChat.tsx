@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Send } from 'lucide-react';
+import { ArrowLeft, Send, Paperclip, Image } from 'lucide-react';
 import agentService, { Agent } from '../services/agentService';
 import { getAgentIconPath } from '../utils';
 
@@ -27,6 +27,8 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
     const loadAgent = async () => {
       const agentData = await agentService.getAgentById(agentId);
       if (agentData) {
+        console.log('Agent data loaded:', agentData);
+        console.log('Example prompts:', agentData.examplePrompts);
         setAgent(agentData);
       }
     };
@@ -137,10 +139,25 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
     };
   };
 
-  // Handle input changes
+  // Handle input changes and adjust textarea height
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
+    // Auto-resize logic with min-height enforcement
+    const textarea = e.target;
+    textarea.style.height = 'auto'; // Reset height to recalculate scrollHeight
+    // Ensure height is at least min-height (matches CSS min-h-[28px])
+    const minHeight = 28;
+    textarea.style.height = `${Math.max(textarea.scrollHeight, minHeight)}px`;
   };
+
+  // Adjust textarea height on input change with min-height
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto'; // Reset height
+      const minHeight = 28; // Match the min-h-[28px] in CSS
+      inputRef.current.style.height = `${Math.max(inputRef.current.scrollHeight, minHeight)}px`;
+    }
+  }, [input]); // Rerun when input changes
 
   // Handle key press (Enter to send, Shift+Enter for new line)
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -191,7 +208,7 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
             />
             <div>
               <h3 className="font-medium text-foreground">{agent.name}</h3>
-              <p className="text-xs text-muted-foreground">{agent.tags.join(', ')}</p>
+              <p className="text-xs text-muted-foreground">{agent.description}</p>
             </div>
           </div>
         )}
@@ -201,12 +218,61 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background-light">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <h3 className="text-xl font-semibold text-foreground mb-2">
-              {agent?.name || 'Agent'} is ready to assist you
-            </h3>
-            <p className="text-muted-foreground max-w-md">
-              {agent?.description || 'Ask a question to get started.'}
-            </p>
+            {agent && (
+              <>
+                <div className="mb-4 p-3 bg-primary-foreground rounded-full inline-flex items-center justify-center shadow-md">
+                  <img 
+                    src={getAgentIconPath(agent.id)}
+                    alt={agent.name}
+                    className="w-12 h-12"
+                    onError={(e) => {
+                      const iconUrl = agent.icon || '';
+                      if (iconUrl.includes('placeholder.com')) {
+                        (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
+                      } else if (iconUrl.startsWith('http')) {
+                        (e.target as HTMLImageElement).src = iconUrl;
+                      } else {
+                        (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
+                      }
+                    }}
+                  />
+                </div>
+                <h2 className="text-2xl font-bold text-foreground mb-1">
+                  {agent.name}
+                </h2>
+                <p className="text-sm text-muted-foreground mb-1">
+                  By Ollama
+                </p>
+                <p className="text-sm text-muted-foreground mb-6 max-w-md">
+                  {agent.description}
+                </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-xl">
+                  {(agent.examplePrompts && agent.examplePrompts.length > 0 ? agent.examplePrompts : [
+                    "How can you help me?",
+                    "What can you do?",
+                    "Tell me about your capabilities",
+                    "What features do you have?"
+                  ]).map((prompt, index) => (
+                    <button
+                      key={index}
+                      onClick={() => {
+                        setInput(prompt);
+                        inputRef.current?.focus();
+                      }}
+                      className="border border-border/80 rounded-lg p-3 text-left text-foreground bg-card hover:border-primary hover:bg-card/80 transition-colors text-sm flex-grow"
+                      style={{
+                        fontFamily: containsRTLText(prompt) ? "'Vazir', sans-serif" : 'inherit',
+                        direction: containsRTLText(prompt) ? 'rtl' : 'ltr',
+                        textAlign: containsRTLText(prompt) ? 'right' : 'left'
+                      }}
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         ) : (
           messages.map((message, index) => (
@@ -271,16 +337,15 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
       </div>
       
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-background-light">
-        <div className="flex items-center relative">
+      <form onSubmit={handleSubmit} className="p-4 bg-background-light">
+        <div className="flex items-center gap-2 bg-background rounded-full py-1 px-3 shadow-inner border border-border/30">
           <textarea
             ref={inputRef}
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyPress}
-            placeholder="Type a message..."
-            className="flex-1 bg-background border border-border rounded-md py-2 pl-3 pr-10 resize-none max-h-[120px] min-h-[44px] shadow-inner"
-            rows={1}
+            placeholder="Ask anything"
+            className="flex-1 bg-transparent focus:outline-none text-foreground placeholder-muted-foreground resize-none overflow-hidden max-h-[120px] py-1 min-h-[28px] mt-5 flex items-center"
             disabled={isLoading}
             style={{
               fontFamily: containsRTLText(input) ? "'Vazir', sans-serif" : 'inherit',
@@ -288,17 +353,36 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
               textAlign: containsRTLText(input) ? 'right' : 'left'
             }}
           />
-          <button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            className="absolute right-3 text-primary disabled:text-muted-foreground"
-          >
-            <Send size={18} />
-          </button>
+          <div className="flex-shrink-0 flex items-center space-x-0.5">
+            <button
+              type="button"
+              disabled={isLoading}
+              className="p-1.5 text-muted-foreground hover:text-primary disabled:text-gray-500 rounded-md hover:bg-muted"
+              aria-label="Attach file"
+            >
+              <Paperclip size={16} />
+            </button>
+            <button
+              type="button"
+              disabled={isLoading}
+              className="p-1.5 text-muted-foreground hover:text-primary disabled:text-gray-500 rounded-md hover:bg-muted"
+              aria-label="Attach image"
+            >
+              <Image size={16} />
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="p-1.5 text-primary disabled:text-muted-foreground rounded-md hover:bg-muted"
+              aria-label="Send message"
+            >
+              <Send size={16} />
+            </button>
+          </div>
         </div>
       </form>
     </div>
   );
 }
 
-export default AgentChat; 
+export default AgentChat;

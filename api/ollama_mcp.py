@@ -3,7 +3,7 @@
 import asyncio
 import json
 import os
-from typing import Optional, List, Dict, Any, Union, Callable
+from typing import Optional, List, Dict, Any, Union, Callable, AsyncGenerator
 from contextlib import AsyncExitStack
 import logging
 from pathlib import Path
@@ -24,8 +24,9 @@ from langchain_core.messages import (
     ToolMessage,
     BaseMessage
 )
+from langchain_core.messages import AIMessageChunk, ToolCall
 from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.outputs import ChatGeneration, ChatResult, ChatGenerationChunk
 from langchain_core.tools import BaseTool, Tool, tool
 from langchain_ollama import ChatOllama
 from langchain_community.chat_message_histories import ChatMessageHistory
@@ -292,120 +293,277 @@ class OllamaChatbot(BaseChatbot):
             app_logger.error(f"Error during similarity search: {str(e)}")
             return ""
 
-    async def chat(self, message: str) -> str:
-        """Process a chat message using the Ollama model, potentially with RAG"""
+    async def chat(
+        self,
+        message: str,
+        tools: Optional[List[Any]] = None,
+        available_functions: Optional[Dict[str, Callable]] = None
+    ) -> str:
+        """
+        Process a chat message using the Ollama model, potentially with RAG and tool calls.
+
+        Args:
+            message: The user's message.
+            tools: Optional list of tool definitions for the Ollama API.
+            available_functions: Optional dictionary mapping tool names to callable functions.
+
+        Returns:
+            The final response from the chatbot.
+        """
         if not self.ready:
             await self.initialize()
 
         if not self.ready:
             return "Chatbot is not ready. Please check the logs and try again."
 
-        # Get relevant context if vector store exists
+        # 1. Get relevant context if vector store exists
         context = await self._get_context_from_query(message)
 
-        # Get current chat history
+        # 2. Get current chat history (excluding system message if present)
         history = self.get_history()
+        # Filter out the system message from history for the initial LLM call preparation
+        # because Langchain's invoke often handles system message implicitly or via memory
+        messages_for_llm = [msg for msg in history if not isinstance(msg, SystemMessage)]
 
-        # Add human message to memory
+        # 3. Prepare the initial HumanMessage
+        human_message_content = f"{message}{context}" if context else message
+        human_message = HumanMessage(content=human_message_content)
+        messages_for_llm.append(human_message)
+
+        # Add user message to memory *before* potential tool call loop
+        # Use original message without context for memory
         self.memory.chat_memory.add_message(HumanMessage(content=message))
 
         try:
-            # Prepare messages for the LLM
-            messages_for_llm = history + [HumanMessage(content=message)]
+            # --- Initial LLM Call (potentially with tools) ---
+            app_logger.debug(f"Invoking LLM (initial call) with {len(messages_for_llm)} messages.")
+            if tools:
+                app_logger.debug(f"Providing tools: {[t.get('function', {}).get('name') for t in tools if isinstance(t, dict)]}")
+                # Bind tools to the chat model for this call
+                llm_with_tools = self.chat_model.bind_tools(tools)
+                ai_response: BaseMessage = await asyncio.to_thread(
+                    llm_with_tools.invoke, messages_for_llm
+                )
+            else:
+                 ai_response: BaseMessage = await asyncio.to_thread(
+                    self.chat_model.invoke, messages_for_llm
+                 )
 
-            # Augment the *last* human message with context for the LLM
-            # Or, prepend context to the whole list? Let's augment last message.
-            if context:
-                 # Check if the last message is HumanMessage, modify its content
-                 if messages_for_llm and isinstance(messages_for_llm[-1], HumanMessage):
-                     messages_for_llm[-1].content = f"{message}{context}"
-                 else: # Should not happen with current logic, but fallback just in case
-                     messages_for_llm.append(HumanMessage(content=f"{message}{context}"))
+            # Add the initial AI response (potentially with tool calls) to memory
+            # This is important for the model's context if it needs to make a follow-up call
+            self.memory.chat_memory.add_message(ai_response)
 
-            app_logger.debug(f"Invoking LLM with {len(messages_for_llm)} messages.")
-            # Invoke the model
-            response = await asyncio.to_thread(
-                self.chat_model.invoke,
-                messages_for_llm # Use the potentially augmented messages
-            )
+            # --- Tool Call Handling ---
+            tool_calls = ai_response.tool_calls if hasattr(ai_response, 'tool_calls') else []
+            final_response_content = ai_response.content # Default response if no tools called
 
-            # Add the AI response to memory
-            self.memory.chat_memory.add_message(AIMessage(content=response.content))
+            if tool_calls and available_functions:
+                app_logger.info(f"Detected {len(tool_calls)} tool call(s): {[tc.get('name') for tc in tool_calls]}")
 
-            return response.content
+                # Prepare messages for the *next* LLM call, starting with the history *including* the first AI response
+                messages_for_final_call = self.get_history() # Get full history now
+
+                for tool_call in tool_calls:
+                     tool_name = tool_call.get("name")
+                     tool_args = tool_call.get("args", {})
+                     tool_id = tool_call.get("id") # Get the tool_call_id
+
+                     if not tool_id:
+                          app_logger.error(f"Tool call '{tool_name}' missing 'id'. Cannot process.")
+                          continue # Or create a ToolMessage with error content
+
+                     if function_to_call := available_functions.get(tool_name):
+                          app_logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+                          try:
+                               # Ensure args are passed correctly, handle potential async functions?
+                               # For now, assume sync functions run in thread
+                                tool_output = await asyncio.to_thread(function_to_call, **tool_args)
+                                tool_output_str = str(tool_output) # Ensure output is string
+                                app_logger.info(f"Tool '{tool_name}' output: {tool_output_str[:100]}...")
+                          except Exception as e:
+                                error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                                app_logger.error(error_msg)
+                                tool_output_str = error_msg
+
+                          # Create ToolMessage with the output and tool_call_id
+                          tool_message = ToolMessage(content=tool_output_str, tool_call_id=tool_id)
+                          messages_for_final_call.append(tool_message)
+                          # Also add to memory for consistency
+                          self.memory.chat_memory.add_message(tool_message)
+                     else:
+                          app_logger.warning(f"Tool function '{tool_name}' not found in available_functions.")
+                          # Provide a response indicating the tool wasn't found
+                          tool_message = ToolMessage(
+                              content=f"Error: Tool '{tool_name}' is not available.",
+                              tool_call_id=tool_id
+                          )
+                          messages_for_final_call.append(tool_message)
+                          self.memory.chat_memory.add_message(tool_message)
+
+
+                # --- Final LLM Call (with tool results) ---
+                app_logger.debug(f"Invoking LLM (final call) with {len(messages_for_final_call)} messages (including tool results).")
+                # No tools needed for the final call, model should just use the tool results
+                final_ai_response: BaseMessage = await asyncio.to_thread(
+                     self.chat_model.invoke, messages_for_final_call
+                )
+
+                final_response_content = final_ai_response.content
+                # Add final AI response to memory
+                self.memory.chat_memory.add_message(final_ai_response)
+
+            elif tool_calls and not available_functions:
+                 app_logger.warning("Model requested tool calls, but no 'available_functions' were provided.")
+                 # Model tried to use tools, but we didn't give it any functions to call.
+                 # The initial AI response might contain a message about wanting to use tools.
+                 final_response_content = ai_response.content + "\n(Note: Tool execution requested but not available.)"
+                 # Memory already has the first AI response. No further messages added here.
+
+            # --- Return final response ---
+            app_logger.debug(f"Final response: {final_response_content[:100]}...")
+            return final_response_content
 
         except Exception as e:
             error_msg = f"Error processing message: {str(e)}"
-            app_logger.error(error_msg)
+            app_logger.error(error_msg, exc_info=True) # Log stack trace
+            # Attempt to remove the potentially incomplete AI message added during error
+            try:
+                last_msg = self.memory.chat_memory.messages[-1]
+                # Be cautious removing messages, ensure it's the one related to the error
+                # For simplicity, we might just leave it and return an error message
+            except IndexError:
+                pass # No messages in memory
             return error_msg
 
-    async def chat_stream(self, message: str):
+    async def chat_stream(
+        self,
+        message: str,
+        tools: Optional[List[Any]] = None,
+        available_functions: Optional[Dict[str, Callable]] = None
+    ) -> AsyncGenerator[str, None]:
         """
-        Process a chat message using the Ollama model and stream the responses, potentially with RAG
+        Process a chat message using the Ollama model with RAG and stream the *final* response.
+        Handles tool calls by invoking the model, executing tools if needed,
+        then invoking again and streaming the final result.
 
-        This is an async generator that yields response chunks as they arrive
-        from the model. Used for SSE and other streaming interfaces.
+        Args:
+            message: The user's message.
+            tools: Optional list of tool definitions for the Ollama API.
+            available_functions: Optional dictionary mapping tool names to callable functions.
+
+        Yields:
+            Response chunks as they arrive from the *final* model invocation.
+            Yields None when the stream is complete.
         """
         if not self.ready:
             await self.initialize()
 
         if not self.ready:
             yield "Chatbot is not ready. Please check the logs and try again."
+            yield None
             return
 
-        # Get relevant context if vector store exists
+        # 1. Get context and history (similar to chat method)
         context = await self._get_context_from_query(message)
-
-        # Get current chat history
         history = self.get_history()
+        messages_for_llm = [msg for msg in history if not isinstance(msg, SystemMessage)]
+        human_message_content = f"{message}{context}" if context else message
+        human_message = HumanMessage(content=human_message_content)
+        messages_for_llm.append(human_message)
 
-        # Add human message to memory *before* augmenting for LLM
+        # Add user message to memory *before* potential tool call loop
         self.memory.chat_memory.add_message(HumanMessage(content=message))
 
         try:
-            # Prepare messages for the LLM
-            messages_for_llm = history + [HumanMessage(content=message)]
+            # --- Initial LLM Call (Non-streaming to detect tool calls) ---
+            app_logger.debug("Invoking LLM (initial non-stream) to check for tool calls.")
+            if tools:
+                llm_with_tools = self.chat_model.bind_tools(tools)
+                ai_response: BaseMessage = await asyncio.to_thread(
+                    llm_with_tools.invoke, messages_for_llm
+                )
+            else:
+                ai_response: BaseMessage = await asyncio.to_thread(
+                    self.chat_model.invoke, messages_for_llm
+                )
 
-            # Augment the *last* human message with context for the LLM
-            if context:
-                 if messages_for_llm and isinstance(messages_for_llm[-1], HumanMessage):
-                     messages_for_llm[-1].content = f"{message}{context}"
-                 else:
-                     messages_for_llm.append(HumanMessage(content=f"{message}{context}"))
+            # Add initial AI response to memory
+            self.memory.chat_memory.add_message(ai_response)
 
-            app_logger.debug(f"Streaming LLM with {len(messages_for_llm)} messages.")
-            # Get a streaming response from the model
+            # --- Tool Call Handling ---
+            tool_calls = ai_response.tool_calls if hasattr(ai_response, 'tool_calls') else []
+            messages_for_final_stream = self.get_history() # Prepare for potential final stream
+
+            if tool_calls and available_functions:
+                app_logger.info(f"Detected {len(tool_calls)} tool call(s) for streaming response.")
+                # Execute tools and prepare ToolMessages (same logic as in chat)
+                for tool_call in tool_calls:
+                    tool_name = tool_call.get("name")
+                    tool_args = tool_call.get("args", {})
+                    tool_id = tool_call.get("id")
+                    if not tool_id: continue
+
+                    if function_to_call := available_functions.get(tool_name):
+                        try:
+                             tool_output = await asyncio.to_thread(function_to_call, **tool_args)
+                             tool_output_str = str(tool_output)
+                        except Exception as e:
+                             tool_output_str = f"Error executing tool {tool_name}: {str(e)}"
+                        tool_message = ToolMessage(content=tool_output_str, tool_call_id=tool_id)
+                        messages_for_final_stream.append(tool_message)
+                        self.memory.chat_memory.add_message(tool_message)
+                    else:
+                         tool_message = ToolMessage(content=f"Error: Tool '{tool_name}' not available.", tool_call_id=tool_id)
+                         messages_for_final_stream.append(tool_message)
+                         self.memory.chat_memory.add_message(tool_message)
+
+            elif tool_calls and not available_functions:
+                 app_logger.warning("Tool calls requested but no functions provided for streaming.")
+                 # Append a note to the initial AI response content if streaming it directly
+                 # However, the logic below streams the *final* response, so this note might not be necessary.
+
+
+            # --- Final LLM Call (Streaming) ---
+            app_logger.debug(f"Streaming LLM (final call) with {len(messages_for_final_stream)} messages.")
             stream_gen = await asyncio.to_thread(
-                lambda: self.chat_model.stream(messages_for_llm) # Use augmented messages
+                lambda: self.chat_model.stream(messages_for_final_stream) # Use potentially updated messages
             )
 
-            # Initialize accumulated response to save to memory later
-            full_response = ""
-
-            # Stream the chunks back to the client
+            full_response = []
+            # Stream the chunks from the *final* response
             async for chunk in self._aiter_from_sync_iter(stream_gen):
-                if hasattr(chunk, 'content') and chunk.content:
-                    full_response += chunk.content
-                    yield chunk.content
-                elif isinstance(chunk, dict) and 'content' in chunk:
-                    full_response += chunk['content']
-                    yield chunk['content']
-                elif isinstance(chunk, str):
-                    full_response += chunk
-                    yield chunk
+                 # Check for content in AIMessageChunk
+                 chunk_content = getattr(chunk, 'content', None)
+                 if chunk_content:
+                     full_response.append(chunk_content)
+                     yield chunk_content
+                 # Handle older formats or direct strings if necessary
+                 elif isinstance(chunk, dict) and 'content' in chunk:
+                     content = chunk['content']
+                     full_response.append(content)
+                     yield content
+                 elif isinstance(chunk, str):
+                     full_response.append(chunk)
+                     yield chunk
+                 # else: ignore other chunk types for now
 
-            # Add the complete response to memory *after* streaming finishes
-            # Ensure we add the *original* AI response, not the augmented one used internally
-            self.memory.chat_memory.add_message(AIMessage(content=full_response))
+            # --- Post-Streaming ---
+            final_response_content = "\n".join(full_response)
+            app_logger.debug(f"Streamed final response: {final_response_content[:100]}...")
 
-            # Yield None to indicate we're done
-            yield None
+            # Add the complete final AI response to memory
+            # Avoid adding if it's identical to the last message (e.g., if no tools were called)
+            last_mem_msg = self.memory.chat_memory.messages[-1] if self.memory.chat_memory.messages else None
+            if not isinstance(last_mem_msg, AIMessage) or last_mem_msg.content != final_response_content:
+                 self.memory.chat_memory.add_message(AIMessage(content=final_response_content))
+
+            yield None # Signal completion
 
         except Exception as e:
             error_msg = f"Error processing streaming message: {str(e)}"
-            app_logger.error(error_msg)
+            app_logger.error(error_msg, exc_info=True)
             yield error_msg
-            yield None  # Signal completion even when error occurs
+            yield None
 
     async def _aiter_from_sync_iter(self, sync_iter):
         """Convert a synchronous iterator to an async iterator"""
