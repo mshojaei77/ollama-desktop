@@ -8,6 +8,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './fetch/queries'
 import { HashRouter, Routes, Route } from 'react-router-dom'
 import { Routes as AppRoutes } from './lib/routes'
+import { Toaster } from 'sonner'
 
 function App(): JSX.Element {
   // Initialize theme from localStorage when app loads
@@ -56,6 +57,9 @@ function App(): JSX.Element {
             </Routes>
           </div>
         </div>
+        
+        {/* Toast notifications */}
+        <Toaster position="bottom-right" richColors closeButton />
       </HashRouter>
     </QueryClientProvider>
   )
