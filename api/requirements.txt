@@ -6,12 +6,20 @@ langchain>=0.1.0
 langchain-community>=0.0.10
 
 # API and Web
-fastapi>=0.104.0
-uvicorn>=0.24.0
+fastapi>=0.103.0
+uvicorn>=0.23.2
 pydantic>=2.4.2
+httpx>=0.24.1
+async-timeout>=4.0.3
+aioconsole>=0.6.1
 
 # Database
-aiosqlite>=0.19.0
+aiosqlite>=0.18.0
+ollama>=0.1.5
+pypdf>=3.15.0
+faiss-cpu>=1.7.4
+tiktoken>=0.5.1
+python-multipart>=0.0.6
 
 # Utilities
 python-dotenv>=1.0.0

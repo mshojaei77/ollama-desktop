@@ -56,6 +56,9 @@ const createFetchStream = (
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     let fullResponse = ''
+    let errorMessage = ''
+
+    console.log('Initiating streaming request to:', url, 'with body:', body)
 
     fetch(url, {
       method: 'POST',
@@ -68,44 +71,76 @@ const createFetchStream = (
         if (!response.ok) {
           throw new Error(`HTTP error! Status: ${response.status}`)
         }
-
+        console.log('Stream connection established, status:', response.status)
+        
         const reader = response.body!.getReader()
         const decoder = new TextDecoder()
 
         function processStream(): Promise<string> {
           return reader.read().then(({ done, value }) => {
             if (done) {
+              console.log('Stream completed, full response length:', fullResponse.length)
               return fullResponse
             }
 
             const chunk = decoder.decode(value)
+            console.log('Received chunk:', chunk)
 
             const lines = chunk.split('\n\n')
+            let processedAny = false
 
             for (const line of lines) {
+              if (line.trim() === '') continue;
+              
               if (line.startsWith('data: ')) {
                 try {
-                  const jsonStr = line.slice(6) // Remove 'data: ' prefix
+                  const jsonStr = line.slice(6).trim() // Remove 'data: ' prefix
+                  console.log('Processing JSON data:', jsonStr)
+                  
+                  if (!jsonStr) {
+                    console.warn('Empty JSON string in data line')
+                    continue
+                  }
+                  
                   const data = JSON.parse(jsonStr)
+                  console.log('Parsed response data:', data)
 
                   if (data.text) {
+                    console.log('Received text chunk:', data.text)
                     fullResponse += data.text
                     onChunk(data.text)
+                    processedAny = true
+                  } else if (data.response) {
+                    // Some APIs might use 'response' instead of 'text'
+                    console.log('Received response chunk:', data.response)
+                    fullResponse += data.response
+                    onChunk(data.response)
+                    processedAny = true
                   }
 
                   if (data.done) {
+                    console.log('Stream marked as done by server')
                     reader.cancel()
                     return fullResponse
                   }
 
                   if (data.error) {
+                    errorMessage = data.error
+                    console.error('Error in stream data:', errorMessage)
                     reader.cancel()
                     throw new Error(data.error)
                   }
-                } catch {
-                  // Ignore invalid JSON, might be partial chunks
+                } catch (error) {
+                  // Log the error but don't reject - could be partial chunks
+                  console.warn('Error parsing JSON from stream:', error, 'for line:', line)
                 }
+              } else {
+                console.log('Non-data line received:', line)
               }
+            }
+
+            if (!processedAny) {
+              console.warn('No data processed from chunk')
             }
 
             return processStream()
@@ -114,10 +149,17 @@ const createFetchStream = (
 
         return processStream()
       })
-      .then((result) => resolve(result))
+      .then((result) => {
+        console.log('Stream complete, resolving with result length:', result.length)
+        resolve(result)
+      })
       .catch((error) => {
         console.error('Fetch streaming error:', error)
-        reject(error)
+        if (errorMessage) {
+          reject(new Error(errorMessage))
+        } else {
+          reject(error)
+        }
       })
   })
 }
@@ -128,7 +170,11 @@ const sendMessage = async (
 ): Promise<SendMessageResponse> => {
   try {
     const url = `${apiClient.defaults.baseURL}/chat/message/stream`
+    console.log('Sending message to stream endpoint:', params.message.substring(0, 20) + '...')
 
+    // Track if we've received any valid text chunks
+    let hasReceivedValidData = false;
+    
     const response = await createFetchStream(
       url,
       {
@@ -136,16 +182,36 @@ const sendMessage = async (
         session_id: params.session_id
       },
       (chunk) => {
-        if (onStreamUpdate) {
-          onStreamUpdate(chunk)
+        if (chunk && chunk.trim()) {
+          hasReceivedValidData = true;
+          if (onStreamUpdate) {
+            console.log('Calling stream update with chunk length:', chunk.length)
+            onStreamUpdate(chunk)
+          }
+        } else {
+          console.warn('Received empty chunk from API')
         }
       }
     )
 
+    console.log('Stream finished, full response length:', response.length)
+    
+    // If we never received valid data but the API didn't error, send a fallback message
+    if (!hasReceivedValidData && response.trim() === '') {
+      console.warn('No valid data received from API during streaming, using fallback message')
+      const fallbackMessage = "I'm sorry, I couldn't generate a response. Please try again.";
+      
+      if (onStreamUpdate) {
+        onStreamUpdate(fallbackMessage);
+      }
+      
+      return { response: fallbackMessage };
+    }
+    
     return { response }
   } catch (error) {
     console.error('Error sending message:', error)
-    throw new Error('Failed to send message. Please try again.')
+    throw error instanceof Error ? error : new Error('Failed to send message. Please try again.')
   }
 }
 
@@ -258,6 +324,7 @@ export const useSendMessage = (): UseMutationResult<
 
   return useMutation({
     mutationFn: async (variables: SendMessageParams) => {
+      console.log('Starting message mutation for session:', variables.session_id)
       const userMessageId = Date.now().toString()
 
       const userMessage = {
@@ -268,6 +335,7 @@ export const useSendMessage = (): UseMutationResult<
       }
 
       // Add user message to store
+      console.log('Adding user message to store')
       addMessage(userMessage)
 
       const assistantMessageId = (Date.now() + 1).toString()
@@ -278,17 +346,27 @@ export const useSendMessage = (): UseMutationResult<
         timestamp: new Date()
       }
 
+      console.log('Adding assistant message placeholder with ID:', assistantMessageId)
       addMessage(assistantMessage)
 
       try {
         // Only one API call that handles both streaming updates and returns the final response
-        return await sendMessage(variables, (chunk) => {
+        console.log('Starting stream for message')
+        const result = await sendMessage(variables, (chunk) => {
           // Update message in the UI as chunks come in
-          updateMessage(assistantMessageId, (content) => content + chunk)
+          console.log('Received chunk in mutation handler:', chunk?.length)
+          updateMessage(assistantMessageId, (prevContent) => {
+            const newContent = prevContent + chunk;
+            console.log('Updating message content, new length:', newContent.length)
+            return newContent
+          })
         })
+        
+        console.log('Message stream completed successfully')
+        return result
       } catch (error) {
         // Handle any errors during streaming
-        console.error('Streaming error:', error)
+        console.error('Streaming error in mutation:', error)
         updateMessage(
           assistantMessageId,
           (content) =>

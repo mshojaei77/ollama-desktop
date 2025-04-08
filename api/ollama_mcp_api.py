@@ -320,21 +320,65 @@ async def chat_message_stream(request: ChatRequest):
             # Set up variables to collect the full response
             full_response = []
             
-            # Use the chatbot's streaming method to get chunks directly from Ollama
-            async for chunk in chatbot.chat_stream(request.message):
-                if chunk is None:
-                    # This is the completion signal from chat_stream
-                    break
-                
-                # Add to the full response
-                full_response.append(chunk)
-                
-                # Send the chunk as an SSE event
-                yield f"data: {json.dumps({'text': chunk})}\n\n"
+            # Log the request to help with debugging
+            app_logger.info(f"Starting stream for message: {request.message[:50]}...")
             
-            # Combine the full response for logging (the message is already saved by chat_stream)
+            try:
+                # Use the chatbot's streaming method to get chunks directly from Ollama
+                async for chunk in chatbot.chat_stream(request.message):
+                    if chunk is None:
+                        app_logger.warning("Received None chunk from chat_stream")
+                        continue
+                    
+                    # Log the chunk format for debugging
+                    app_logger.debug(f"Received stream chunk: {str(chunk)[:100]}...")
+                    
+                    # Extract the content from chunk depending on format
+                    if isinstance(chunk, dict):
+                        if 'message' in chunk and 'content' in chunk['message']:
+                            text = chunk['message']['content']
+                        elif 'content' in chunk:
+                            text = chunk['content']
+                        elif 'text' in chunk:
+                            text = chunk['text']
+                        else:
+                            app_logger.warning(f"Unrecognized chunk format: {chunk}")
+                            continue
+                    elif isinstance(chunk, str):
+                        text = chunk
+                    else:
+                        app_logger.warning(f"Unrecognized chunk type: {type(chunk)}")
+                        continue
+                    
+                    if not text:
+                        continue
+                        
+                    # Add to the full response
+                    full_response.append(text)
+                    
+                    # Log meaningful chunks for debugging
+                    if text.strip():
+                        app_logger.debug(f"Streaming chunk: {text}")
+                    
+                    # Send the chunk as an SSE event
+                    yield f"data: {json.dumps({'text': text})}\n\n"
+            except Exception as e:
+                app_logger.error(f"Error during streaming: {str(e)}", exc_info=True)
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                raise
+            
+            # Combine the full response for logging
             complete_response = ''.join(full_response)
-            app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
+            
+            # Log the complete response
+            if complete_response:
+                app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
+            else:
+                app_logger.warning("No content received in stream - empty response")
+                # Add a fallback response if nothing was streamed
+                fallback_response = "I'm sorry, I couldn't generate a response. There might be an issue with the model."
+                yield f"data: {json.dumps({'text': fallback_response})}\n\n"
+                complete_response = fallback_response
             
             # Update session activity
             await db.update_session_activity(request.session_id)
@@ -346,7 +390,7 @@ async def chat_message_stream(request: ChatRequest):
             yield f"data: {json.dumps({'done': True})}\n\n"
             
         except Exception as e:
-            app_logger.error(f"Error streaming chat message: {str(e)}")
+            app_logger.error(f"Error streaming chat message: {str(e)}", exc_info=True)
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return StreamingResponse(

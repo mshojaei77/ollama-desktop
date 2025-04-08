@@ -442,9 +442,8 @@ class OllamaChatbot(BaseChatbot):
         available_functions: Optional[Dict[str, Callable]] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Process a chat message using the Ollama model with RAG and stream the *final* response.
-        Handles tool calls by invoking the model, executing tools if needed,
-        then invoking again and streaming the final result.
+        Process a chat message using the Ollama model with RAG and stream the response.
+        Correctly uses the Ollama Python API format.
 
         Args:
             message: The user's message.
@@ -452,118 +451,121 @@ class OllamaChatbot(BaseChatbot):
             available_functions: Optional dictionary mapping tool names to callable functions.
 
         Yields:
-            Response chunks as they arrive from the *final* model invocation.
-            Yields None when the stream is complete.
+            Response chunks as they arrive from the model.
         """
         if not self.ready:
             await self.initialize()
 
         if not self.ready:
             yield "Chatbot is not ready. Please check the logs and try again."
-            yield None
             return
 
-        # 1. Get context and history (similar to chat method)
-        context = await self._get_context_from_query(message)
-        history = self.get_history()
-        messages_for_llm = [msg for msg in history if not isinstance(msg, SystemMessage)]
-        human_message_content = f"{message}{context}" if context else message
-        human_message = HumanMessage(content=human_message_content)
-        messages_for_llm.append(human_message)
-
-        # Add user message to memory *before* potential tool call loop
-        self.memory.chat_memory.add_message(HumanMessage(content=message))
-
         try:
-            # --- Initial LLM Call (Non-streaming to detect tool calls) ---
-            app_logger.debug("Invoking LLM (initial non-stream) to check for tool calls.")
-            if tools:
-                llm_with_tools = self.chat_model.bind_tools(tools)
-                ai_response: BaseMessage = await asyncio.to_thread(
-                    llm_with_tools.invoke, messages_for_llm
+            # Get context enrichment if available
+            context = await self._get_context_from_query(message)
+            
+            # Format the messages for Ollama API
+            messages = []
+            
+            # Add system message if it exists
+            if self.system_message:
+                messages.append({"role": "system", "content": self.system_message})
+            
+            # Add chat history
+            history = self.get_history()
+            for msg in history:
+                if isinstance(msg, HumanMessage):
+                    messages.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    messages.append({"role": "assistant", "content": msg.content})
+            
+            # Add the current message with context
+            human_message_content = f"{message}{context}" if context else message
+            messages.append({"role": "user", "content": human_message_content})
+            
+            # Add user message to memory
+            self.memory.chat_memory.add_message(HumanMessage(content=message))
+            
+            app_logger.info(f"Streaming chat with {len(messages)} messages")
+            app_logger.debug(f"Messages: {messages}")
+            
+            # Import Ollama Python client dynamically 
+            # (this allows us to work with the new format while keeping backward compatibility)
+            try:
+                import ollama
+                async_client = ollama.AsyncClient(host=self.base_url)
+                
+                # Stream response from Ollama
+                app_logger.info(f"Using Ollama Python client to stream response")
+                stream = await async_client.chat(
+                    model=self.model_name,
+                    messages=messages,
+                    stream=True,
+                    options={
+                        "temperature": self.temperature,
+                        "top_p": self.top_p
+                    }
                 )
+                
+                full_response = ""
+                async for chunk in stream:
+                    if not chunk:
+                        continue
+                        
+                    app_logger.debug(f"Received chunk: {chunk}")
+                    
+                    # Extract content from the message
+                    if 'message' in chunk and 'content' in chunk['message']:
+                        content = chunk['message']['content']
+                        if content:
+                            full_response += content
+                            yield content
+            except ImportError:
+                # Fallback to langchain implementation if ollama client not available
+                app_logger.warning("Ollama Python client not available, using LangChain fallback")
+                
+                # Convert to LangChain format
+                lc_messages = []
+                for msg in messages:
+                    if msg["role"] == "system":
+                        lc_messages.append(SystemMessage(content=msg["content"]))
+                    elif msg["role"] == "user":
+                        lc_messages.append(HumanMessage(content=msg["content"]))
+                    elif msg["role"] == "assistant":
+                        lc_messages.append(AIMessage(content=msg["content"]))
+                
+                # Stream using LangChain
+                stream_gen = await asyncio.to_thread(
+                    lambda: self.chat_model.stream(lc_messages)
+                )
+
+                full_response = ""
+                async for chunk in self._aiter_from_sync_iter(stream_gen):
+                    # Check for content in AIMessageChunk
+                    chunk_content = getattr(chunk, 'content', None)
+                    if chunk_content:
+                        full_response += chunk_content
+                        yield chunk_content
+                    # Handle older formats or direct strings if necessary
+                    elif isinstance(chunk, dict) and 'content' in chunk:
+                        content = chunk['content']
+                        full_response += content
+                        yield content
+                    elif isinstance(chunk, str):
+                        full_response += chunk
+                        yield chunk
+            
+            # Add the complete response to memory
+            if full_response:
+                app_logger.info(f"Streamed complete response (first 100 chars): {full_response[:100]}")
+                self.memory.chat_memory.add_message(AIMessage(content=full_response))
             else:
-                ai_response: BaseMessage = await asyncio.to_thread(
-                    self.chat_model.invoke, messages_for_llm
-                )
-
-            # Add initial AI response to memory
-            self.memory.chat_memory.add_message(ai_response)
-
-            # --- Tool Call Handling ---
-            tool_calls = ai_response.tool_calls if hasattr(ai_response, 'tool_calls') else []
-            messages_for_final_stream = self.get_history() # Prepare for potential final stream
-
-            if tool_calls and available_functions:
-                app_logger.info(f"Detected {len(tool_calls)} tool call(s) for streaming response.")
-                # Execute tools and prepare ToolMessages (same logic as in chat)
-                for tool_call in tool_calls:
-                    tool_name = tool_call.get("name")
-                    tool_args = tool_call.get("args", {})
-                    tool_id = tool_call.get("id")
-                    if not tool_id: continue
-
-                    if function_to_call := available_functions.get(tool_name):
-                        try:
-                             tool_output = await asyncio.to_thread(function_to_call, **tool_args)
-                             tool_output_str = str(tool_output)
-                        except Exception as e:
-                             tool_output_str = f"Error executing tool {tool_name}: {str(e)}"
-                        tool_message = ToolMessage(content=tool_output_str, tool_call_id=tool_id)
-                        messages_for_final_stream.append(tool_message)
-                        self.memory.chat_memory.add_message(tool_message)
-                    else:
-                         tool_message = ToolMessage(content=f"Error: Tool '{tool_name}' not available.", tool_call_id=tool_id)
-                         messages_for_final_stream.append(tool_message)
-                         self.memory.chat_memory.add_message(tool_message)
-
-            elif tool_calls and not available_functions:
-                 app_logger.warning("Tool calls requested but no functions provided for streaming.")
-                 # Append a note to the initial AI response content if streaming it directly
-                 # However, the logic below streams the *final* response, so this note might not be necessary.
-
-
-            # --- Final LLM Call (Streaming) ---
-            app_logger.debug(f"Streaming LLM (final call) with {len(messages_for_final_stream)} messages.")
-            stream_gen = await asyncio.to_thread(
-                lambda: self.chat_model.stream(messages_for_final_stream) # Use potentially updated messages
-            )
-
-            full_response = []
-            # Stream the chunks from the *final* response
-            async for chunk in self._aiter_from_sync_iter(stream_gen):
-                 # Check for content in AIMessageChunk
-                 chunk_content = getattr(chunk, 'content', None)
-                 if chunk_content:
-                     full_response.append(chunk_content)
-                     yield chunk_content
-                 # Handle older formats or direct strings if necessary
-                 elif isinstance(chunk, dict) and 'content' in chunk:
-                     content = chunk['content']
-                     full_response.append(content)
-                     yield content
-                 elif isinstance(chunk, str):
-                     full_response.append(chunk)
-                     yield chunk
-                 # else: ignore other chunk types for now
-
-            # --- Post-Streaming ---
-            final_response_content = "\n".join(full_response)
-            app_logger.debug(f"Streamed final response: {final_response_content[:100]}...")
-
-            # Add the complete final AI response to memory
-            # Avoid adding if it's identical to the last message (e.g., if no tools were called)
-            last_mem_msg = self.memory.chat_memory.messages[-1] if self.memory.chat_memory.messages else None
-            if not isinstance(last_mem_msg, AIMessage) or last_mem_msg.content != final_response_content:
-                 self.memory.chat_memory.add_message(AIMessage(content=final_response_content))
-
-            yield None # Signal completion
+                app_logger.warning("No response content received from stream")
 
         except Exception as e:
-            error_msg = f"Error processing streaming message: {str(e)}"
+            error_msg = f"Error during chat streaming: {str(e)}"
             app_logger.error(error_msg, exc_info=True)
             yield error_msg
-            yield None
 
     async def _aiter_from_sync_iter(self, sync_iter):
         """Convert a synchronous iterator to an async iterator"""
