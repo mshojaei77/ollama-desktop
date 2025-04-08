@@ -154,6 +154,7 @@ def generate_session_id() -> str:
 
 async def cleanup_session(session_id: str):
     """Clean up resources for a session"""
+    # 1. Clean up in-memory resources (clients/chatbots)
     if session_id in active_clients:
         await active_clients[session_id].cleanup()
         del active_clients[session_id]
@@ -164,8 +165,11 @@ async def cleanup_session(session_id: str):
         del active_chatbots[session_id]
         app_logger.info(f"Cleaned up chatbot session: {session_id}")
     
-    # Mark session as inactive in database
-    await db.deactivate_session(session_id)
+    # 2. Permanently delete session and history from the database
+    try:
+        await db.delete_session_permanently(session_id)
+    except Exception as e:
+        app_logger.error(f"Error permanently deleting session {session_id} from database: {str(e)}")
 
 ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
@@ -563,14 +567,23 @@ async def add_mcp_server(request: MCPServerAddRequest):
 @app.delete("/sessions/{session_id}", response_model=StatusResponse)
 async def delete_session(session_id: str, background_tasks: BackgroundTasks):
     """Delete a session"""
-    if session_id not in active_clients and session_id not in active_chatbots:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    session_in_memory = session_id in active_clients or session_id in active_chatbots
     
+    # Check if session exists in memory or database
+    if not session_in_memory:
+        db_session = await db.get_session(session_id)
+        if not db_session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        # Session exists in DB but not memory, still proceed with cleanup/deactivation
+        app_logger.info(f"Session {session_id} found in DB but not in active memory. Proceeding with deactivation.")
+
     # Schedule cleanup to happen in the background
     # The cleanup_session function will handle resource release and database deactivation
     background_tasks.add_task(cleanup_session, session_id)
     
     # Determine current active sessions *before* cleanup potentially finishes
+    # This part remains tricky as the session might be removed by the background task immediately.
+    # We filter the list based on the current state, excluding the one being deleted.
     current_active_sessions = list(set(list(active_clients.keys()) + list(active_chatbots.keys())))
     if session_id in current_active_sessions:
          # Exclude the session being deleted if it's still in the in-memory dicts

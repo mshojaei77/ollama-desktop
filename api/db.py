@@ -332,6 +332,17 @@ async def get_sessions_with_message_count(
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
+async def delete_session_permanently(session_id: str) -> None:
+    """Permanently delete a session and its chat history from the database"""
+    async with async_db_connection() as conn:
+        cursor = conn.cursor()
+        # Ensure foreign key constraints are enabled (usually on by default but good practice)
+        cursor.execute("PRAGMA foreign_keys = ON") 
+        # Deleting from sessions will cascade delete from chat_history due to ON DELETE CASCADE
+        cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+        conn.commit()
+        app_logger.info(f"Permanently deleted session {session_id} and its history from the database.")
+
 # ----- Chat history operations -----
 
 async def add_chat_message(session_id: str, role: str, message: str) -> None:

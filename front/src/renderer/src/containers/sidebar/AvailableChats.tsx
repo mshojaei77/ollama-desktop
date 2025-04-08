@@ -1,10 +1,11 @@
-import { Loader2, MessageSquare } from 'lucide-react'
+import { Loader2, MessageSquare, Trash2 } from 'lucide-react'
 import { APIChat, DisplayedChatSession } from '@renderer/fetch/types'
 import { useChatStore } from '@renderer/store/chatStore'
 import { useAvailableChats, useSearchChats } from '@renderer/fetch/queries'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Routes } from '@renderer/lib/routes'
+import { toast } from 'sonner'
 
 const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element => {
   const [paginationState] = useState({
@@ -28,7 +29,8 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
   const {
     data: searchChatsData,
     isLoading: isSearchingChats,
-    isError: isSearchError
+    isError: isSearchError,
+    refetch: refetchSearchChats
   } = useSearchChats(
     searchQuery,
     paginationState.includeInactive,
@@ -39,7 +41,8 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
   const {
     data: availableChatsData,
     isLoading: isLoadingChats,
-    isError: isChatsError
+    isError: isChatsError,
+    refetch: refetchAvailableChats
   } = useAvailableChats(
     paginationState.includeInactive,
     paginationState.limit,
@@ -88,6 +91,38 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
     }
   }
 
+  const handleDeleteChat = async (e: React.MouseEvent, chatId: string): Promise<void> => {
+    e.stopPropagation() // Prevent click event from bubbling to parent (which would select the chat)
+    
+    try {
+      const response = await fetch(`http://localhost:8000/sessions/${chatId}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        // If the deleted chat is the currently active one, clear it
+        if (chatId === sessionId) {
+          setSessionId('')
+          setSessionActive(false)
+          navigate(Routes.HOME)
+        }
+        
+        // Refresh chat lists
+        refetchAvailableChats()
+        if (searchQuery && searchQuery.trim().length > 0) {
+          refetchSearchChats()
+        }
+        
+        toast.success('Chat deleted successfully')
+      } else {
+        toast.error('Failed to delete chat')
+      }
+    } catch (error) {
+      console.error('Error deleting chat:', error)
+      toast.error('Failed to delete chat')
+    }
+  }
+
   return (
     <div className="flex-grow overflow-y-auto px-2 hide-scrollbar">
       <div className="flex justify-between items-center px-2 mb-2">
@@ -116,15 +151,21 @@ const AvailableChats = ({ searchQuery }: { searchQuery: string }): JSX.Element =
           <div
             key={chat.id}
             onClick={() => handleChatClick(chat)}
-            className={`flex flex-col p-2 rounded-lg cursor-pointer mb-1 ${
+            className={`flex flex-col p-2 rounded-lg cursor-pointer mb-1 group ${
               activeChat === chat.id || sessionId === chat.id 
                 ? 'bg-[hsl(var(--secondary))]' 
                 : 'hover:bg-[hsl(var(--secondary))]'
             }`}
           >
-            <div className="flex items-center">
-              <MessageSquare className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))] flex-shrink-0" />
-              <span className="text-sm text-[hsl(var(--foreground))] font-medium truncate">{chat.title}</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center flex-grow overflow-hidden">
+                <MessageSquare className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))] flex-shrink-0" />
+                <span className="text-sm text-[hsl(var(--foreground))] font-medium truncate">{chat.title}</span>
+              </div>
+              <Trash2 
+                className="h-4 w-4 text-[hsl(var(--muted-foreground))] opacity-0 group-hover:opacity-100 transition-opacity hover:text-[hsl(var(--destructive))]"
+                onClick={(e) => handleDeleteChat(e, chat.id)}
+              />
             </div>
 
             <div className="ml-6 mt-1">
