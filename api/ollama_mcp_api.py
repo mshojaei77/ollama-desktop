@@ -478,6 +478,59 @@ async def process_mcp_query(request: ChatRequest):
         app_logger.error(f"Error processing MCP query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing MCP query: {str(e)}")
 
+@app.post("/mcp/query/stream", tags=["MCP"])
+async def mcp_query_stream(request: ChatRequest):
+    """
+    Send a message to an MCP client and stream the response using SSE
+    
+    - Requires a valid session_id from a previous /chat/initialize-with-mcp or /mcp/connect call
+    - Streams the model's response, including MCP tool execution results
+    - Saves the conversation history to the database once completed
+    """
+    if request.session_id not in active_clients:
+        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
+    
+    async def generate_stream() -> AsyncGenerator[str, None]:
+        """Generate streaming response from MCPClient"""
+        try:
+            client = active_clients[request.session_id]
+            
+            # Save user message to history
+            await db.add_chat_message(request.session_id, "user", request.message)
+            
+            # Process query with MCP tools and stream the response
+            full_response = []
+            
+            # Use a custom streaming method (to be added to MCPClient)
+            async for chunk in client.process_query_stream(request.message):
+                if chunk is None:  # Completion signal
+                    break
+                
+                full_response.append(chunk)
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+            
+            # Combine the full response for logging and history
+            complete_response = ''.join(full_response)
+            app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
+            
+            # Update session activity
+            await db.update_session_activity(request.session_id)
+            
+            # Save assistant response to history
+            await db.add_chat_message(request.session_id, "assistant", complete_response)
+            
+            # Send completion signal
+            yield f"data: {json.dumps({'done': True})}\n\n"
+            
+        except Exception as e:
+            app_logger.error(f"Error streaming MCP query: {str(e)}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream"
+    )
+    
 @app.post("/mcp/direct-query", response_model=ChatResponse)
 async def process_direct_query(request: ChatRequest):
     """Process a direct query with Ollama (no MCP tools)"""
@@ -955,47 +1008,56 @@ async def initialize_chat_with_mcp(request: InitializeRequest):
             raise HTTPException(status_code=400, detail="Model name cannot be empty")
         
         session_id = request.session_id or generate_session_id()
-        
+        print("-----")
+        print("session_id", session_id)
+        print("-----")
         # Clean up existing session if it exists
-        if session_id in active_chatbots or session_id in active_clients:
-            await cleanup_session(session_id)
+        # if session_id in active_chatbots or session_id in active_clients:
+        #     await cleanup_session(session_id)
         
         # Get active MCP servers
-        active_servers = await db.get_active_mcp_servers()
+        # active_servers = await db.get_active_mcp_servers()
+        config = await OllamaMCPPackage.load_mcp_config()
+        servers_config = config.get("mcpServers", {})
+        print("servers_config", servers_config)
         
         # If there are active MCP servers, use them
-        if active_servers:
-            app_logger.info(f"Initializing chat with active MCP servers: {active_servers}")
-            
-            # Get the first active server config for now (in future could support multiple)
-            server_config = await OllamaMCPPackage.get_mcp_server_config(active_servers[0])
-            
-            if not server_config:
-                app_logger.warning(f"No config found for active server {active_servers[0]}, falling back to regular chat")
-                return await initialize_chatbot(request)
-            
-            # Create MCP client
-            client = await OllamaMCPPackage.create_client(model_name=request.model_name)
-            
-            # Connect to server based on type
-            server_type = server_config.get('type', 'stdio')
-            
-            if server_type == "sse":
-                server_url = server_config.get('url')
-                if not server_url:
-                    raise HTTPException(status_code=400, detail="Server URL not found in config")
+        if servers_config:
+            app_logger.info(f"Initializing chat with active MCP servers: {servers_config}")
+            for server in servers_config:
+                print("!!server_config", server)
+                server_config = servers_config[server]
+
+                if not server_config:
+                    app_logger.warning(f"No config found for active server {server}, falling back to regular chat")
+                    return await initialize_chatbot(request)
                 
-                await client.connect_to_sse_server(server_url=server_url)
-            
-            elif server_type == "stdio":
-                command = server_config.get('command')
-                args = server_config.get('args', [])
+                if not server_config.get('active', False):
+                    app_logger.warning(f"Server {server} is not active, skipping")
+                    continue
                 
-                if not command:
-                    raise HTTPException(status_code=400, detail="Command not found in config")
+                # Create MCP client
+                client = await OllamaMCPPackage.create_client(model_name=request.model_name)
                 
-                await client.connect_to_stdio_server(command=command, args=args)
-            
+                # Connect to server based on type
+                server_type = server_config.get('type', 'stdio')
+                
+                if server_type == "sse":
+                    server_url = server_config.get('url')
+                    if not server_url:
+                        raise HTTPException(status_code=400, detail="Server URL not found in config")
+                    
+                    await client.connect_to_sse_server(server_url=server_url)
+                
+                elif server_type == "stdio":
+                    command = server_config.get('command')
+                    args = server_config.get('args', [])
+                    
+                    if not command:
+                        raise HTTPException(status_code=400, detail="Command not found in config")
+                    
+                    await client.connect_to_stdio_server(command=command, args=args)
+                
             # Store in active clients
             active_clients[session_id] = client
             
@@ -1278,10 +1340,9 @@ def start_frontend():
         app_logger.error(f"Failed to start frontend: {str(e)}")
 
 def start_server():
-    """Start the FastAPI server"""
-    # Start frontend in a separate terminal
-    start_frontend()
-    # Start the API server
+    """Start the FastAPI server and open Swagger UI"""
+    # Start browser in a separate thread so it doesn't block the server
+    # threading.Thread(target=open_browser).start()
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":

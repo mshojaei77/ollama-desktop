@@ -33,13 +33,13 @@ export const queryClient = new QueryClient({
 // API functions
 const fetchModels = async (): Promise<ModelsResponse> => {
   // Try to load models list from localStorage cache
-  const cachedModels = localStorage.getItem('modelsResponse');
+  const cachedModels = localStorage.getItem('modelsResponse')
   if (cachedModels) {
     try {
-      return JSON.parse(cachedModels) as ModelsResponse;
+      return JSON.parse(cachedModels) as ModelsResponse
     } catch (e) {
-      console.warn('Failed to parse cached modelsResponse, fetching from API', e);
-      localStorage.removeItem('modelsResponse');
+      console.warn('Failed to parse cached modelsResponse, fetching from API', e)
+      localStorage.removeItem('modelsResponse')
     }
   }
   try {
@@ -53,15 +53,15 @@ const fetchModels = async (): Promise<ModelsResponse> => {
     // Optionally, validate each model object has a name
     data.models.forEach((model, index) => {
       if (!model || typeof model.name !== 'string') {
-        console.warn(`Model at index ${index} has invalid format:`, model);
+        console.warn(`Model at index ${index} has invalid format:`, model)
         // Depending on strictness, you might want to filter these out or throw an error
       }
-    });
+    })
     // Cache the fetched models list for future sessions
     try {
-      localStorage.setItem('modelsResponse', JSON.stringify(data));
+      localStorage.setItem('modelsResponse', JSON.stringify(data))
     } catch (e) {
-      console.error('Failed to cache models response', e);
+      console.error('Failed to cache models response', e)
     }
     return data
   } catch (error) {
@@ -72,7 +72,10 @@ const fetchModels = async (): Promise<ModelsResponse> => {
 
 const initializeChat = async (params: InitializeChatParams): Promise<InitializeChatResponse> => {
   try {
-    const { data } = await apiClient.post<InitializeChatResponse>('/chat/initialize', params)
+    const { data } = await apiClient.post<InitializeChatResponse>(
+      '/chat/initialize-with-mcp',
+      params
+    )
     return data
   } catch (error) {
     console.error('Error initializing chat:', error)
@@ -103,7 +106,7 @@ const createFetchStream = (
           throw new Error(`HTTP error! Status: ${response.status}`)
         }
         console.log('Stream connection established, status:', response.status)
-        
+
         const reader = response.body!.getReader()
         const decoder = new TextDecoder()
 
@@ -121,18 +124,18 @@ const createFetchStream = (
             let processedAny = false
 
             for (const line of lines) {
-              if (line.trim() === '') continue;
-              
+              if (line.trim() === '') continue
+
               if (line.startsWith('data: ')) {
                 try {
                   const jsonStr = line.slice(6).trim() // Remove 'data: ' prefix
                   console.log('Processing JSON data:', jsonStr)
-                  
+
                   if (!jsonStr) {
                     console.warn('Empty JSON string in data line')
                     continue
                   }
-                  
+
                   const data = JSON.parse(jsonStr)
                   console.log('Parsed response data:', data)
 
@@ -200,12 +203,11 @@ const sendMessage = async (
   onStreamUpdate?: (chunk: string) => void
 ): Promise<SendMessageResponse> => {
   try {
-    const url = `${apiClient.defaults.baseURL}/chat/message/stream`
-    console.log('Sending message to stream endpoint:', params.message.substring(0, 20) + '...')
+    const url = `${apiClient.defaults.baseURL}/mcp/query/stream`
 
     // Track if we've received any valid text chunks
-    let hasReceivedValidData = false;
-    
+    let hasReceivedValidData = false
+
     const response = await createFetchStream(
       url,
       {
@@ -214,7 +216,7 @@ const sendMessage = async (
       },
       (chunk) => {
         if (chunk && chunk.trim()) {
-          hasReceivedValidData = true;
+          hasReceivedValidData = true
           if (onStreamUpdate) {
             console.log('Calling stream update with chunk length:', chunk.length)
             onStreamUpdate(chunk)
@@ -226,19 +228,19 @@ const sendMessage = async (
     )
 
     console.log('Stream finished, full response length:', response.length)
-    
+
     // If we never received valid data but the API didn't error, send a fallback message
     if (!hasReceivedValidData && response.trim() === '') {
       console.warn('No valid data received from API during streaming, using fallback message')
-      const fallbackMessage = "I'm sorry, I couldn't generate a response. Please try again.";
-      
+      const fallbackMessage = "I'm sorry, I couldn't generate a response. Please try again."
+
       if (onStreamUpdate) {
-        onStreamUpdate(fallbackMessage);
+        onStreamUpdate(fallbackMessage)
       }
-      
-      return { response: fallbackMessage };
+
+      return { response: fallbackMessage }
     }
-    
+
     return { response }
   } catch (error) {
     console.error('Error sending message:', error)
@@ -388,12 +390,12 @@ export const useSendMessage = (): UseMutationResult<
           // Update message in the UI as chunks come in
           console.log('Received chunk in mutation handler:', chunk?.length)
           updateMessage(assistantMessageId, (prevContent) => {
-            const newContent = prevContent + chunk;
+            const newContent = prevContent + chunk
             console.log('Updating message content, new length:', newContent.length)
             return newContent
           })
         })
-        
+
         console.log('Message stream completed successfully')
         return result
       } catch (error) {
@@ -470,30 +472,30 @@ export const useMCPServers = (): UseQueryResult<MCPServersResponse, Error> => {
 
 const fetchModelInfo = async (modelName: string): Promise<ModelDetails> => {
   // Try to load model details from localStorage cache
-  const cachedInfosStr = localStorage.getItem('modelInfos');
+  const cachedInfosStr = localStorage.getItem('modelInfos')
   if (cachedInfosStr) {
     try {
-      const cachedInfos = JSON.parse(cachedInfosStr) as Record<string, ModelDetails>;
+      const cachedInfos = JSON.parse(cachedInfosStr) as Record<string, ModelDetails>
       if (cachedInfos[modelName]) {
-        return cachedInfos[modelName];
+        return cachedInfos[modelName]
       }
     } catch (e) {
-      console.warn('Failed to parse cached modelInfos', e);
-      localStorage.removeItem('modelInfos');
+      console.warn('Failed to parse cached modelInfos', e)
+      localStorage.removeItem('modelInfos')
     }
   }
   // Make sure modelName is properly encoded for the URL
-  const encodedModelName = encodeURIComponent(modelName);
+  const encodedModelName = encodeURIComponent(modelName)
   try {
     const { data } = await apiClient.get<ModelDetails>(`/models/${encodedModelName}/info`)
     // Cache fetched model details permanently in localStorage
     try {
-      const infosStr = localStorage.getItem('modelInfos');
-      const infos = infosStr ? JSON.parse(infosStr) as Record<string, ModelDetails> : {};
-      infos[modelName] = data;
-      localStorage.setItem('modelInfos', JSON.stringify(infos));
+      const infosStr = localStorage.getItem('modelInfos')
+      const infos = infosStr ? (JSON.parse(infosStr) as Record<string, ModelDetails>) : {}
+      infos[modelName] = data
+      localStorage.setItem('modelInfos', JSON.stringify(infos))
     } catch (e) {
-      console.error('Failed to cache model info', e);
+      console.error('Failed to cache model info', e)
     }
     return data
   } catch (error) {
@@ -513,6 +515,6 @@ export const useModelInfo = (modelName: string | null) => {
       return fetchModelInfo(modelName)
     },
     enabled: !!modelName, // Only run the query if modelName is provided
-    staleTime: Infinity, // Cache indefinitely
+    staleTime: Infinity // Cache indefinitely
   })
 }

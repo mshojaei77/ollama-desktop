@@ -506,69 +506,75 @@ def migrate_database():
 
 async def get_active_mcp_servers():
     """Get list of active MCP server names"""
-    conn = await get_db_connection()
-    try:
-        # Check if table exists
-        table_exists = await conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
-        )
-        if not await table_exists.fetchone():
-            # Create table if it doesn't exist
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS mcp_server_status (
-                    server_name TEXT PRIMARY KEY,
-                    is_active BOOLEAN DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            await conn.commit()
+    async with async_db_connection() as conn:
+        try:
+            cursor = conn.cursor()
+            
+            # Check if table exists
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
+            )
+            if not cursor.fetchone():
+                # Create table if it doesn't exist
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS mcp_server_status (
+                        server_name TEXT PRIMARY KEY,
+                        is_active BOOLEAN DEFAULT 0,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                conn.commit()
+                return []
+            
+            # Get active servers
+            cursor.execute(
+                "SELECT server_name FROM mcp_server_status WHERE is_active = 1"
+            )
+            active_servers = [row[0] for row in cursor.fetchall()]
+            return active_servers
+        except Exception as e:
+            app_logger.error(f"Error in get_active_mcp_servers: {e}")
             return []
-        
-        # Get active servers
-        cursor = await conn.execute(
-            "SELECT server_name FROM mcp_server_status WHERE is_active = 1"
-        )
-        active_servers = [row[0] for row in await cursor.fetchall()]
-        return active_servers
-    finally:
-        await conn.close()
 
 async def set_mcp_server_active(server_name, is_active):
     """Set MCP server active status"""
     if not server_name:
         return False
     
-    conn = await get_db_connection()
-    try:
-        # Check if table exists
-        table_exists = await conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
-        )
-        if not await table_exists.fetchone():
-            # Create table if it doesn't exist
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS mcp_server_status (
-                    server_name TEXT PRIMARY KEY,
-                    is_active BOOLEAN DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-        
-        # Update or insert server status
-        await conn.execute(
-            """
-            INSERT INTO mcp_server_status (server_name, is_active, last_updated)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(server_name) DO UPDATE SET
-                is_active = ?,
-                last_updated = CURRENT_TIMESTAMP
-            """,
-            (server_name, 1 if is_active else 0, 1 if is_active else 0)
-        )
-        await conn.commit()
-        return True
-    finally:
-        await conn.close()
+    async with async_db_connection() as conn:
+        try:
+            cursor = conn.cursor()
+            
+            # Check if table exists
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
+            )
+            if not cursor.fetchone():
+                # Create table if it doesn't exist
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS mcp_server_status (
+                        server_name TEXT PRIMARY KEY,
+                        is_active BOOLEAN DEFAULT 0,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+            
+            # Update or insert server status
+            cursor.execute(
+                """
+                INSERT INTO mcp_server_status (server_name, is_active, last_updated)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(server_name) DO UPDATE SET
+                    is_active = ?,
+                    last_updated = CURRENT_TIMESTAMP
+                """,
+                (server_name, 1 if is_active else 0, 1 if is_active else 0)
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            app_logger.error(f"Error setting MCP server active status: {e}")
+            return False
 
 # Add a method to OllamaMCPPackage to get server config by name
 async def get_mcp_server_config(server_name):

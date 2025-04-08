@@ -54,6 +54,8 @@ from langchain.memory import ConversationBufferMemory
 from dotenv import load_dotenv
 import anyio
 from tqdm import tqdm # Added import
+import re
+
 
 # Import the logger
 from api.logger import app_logger
@@ -720,12 +722,54 @@ class MCPClient:
         self.exit_stack = AsyncExitStack()
         self.model = model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
         self.direct_mode = False  # Flag to indicate if we're in direct chat mode
-
+        self.available_tools = []  # Store tools dynamically
+        
+        # Initialize chatbot with a placeholder system message
+        # We'll update this after connecting to the server
+        placeholder_system_message = (
+            "You are an assistant with access to MCP tools. When a user requests an action, "
+            "respond with a JSON tool call in this format: "
+            "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
+            "Available tools will be provided after server connection."
+        )
         # Initialize chatbot
-        self.chatbot = OllamaChatbot(model_name=self.model, verbose=True)
+        self.chatbot = OllamaChatbot(
+            model_name=self.model,
+            system_message=placeholder_system_message,
+            verbose=True
+        )
 
         app_logger.info(f"MCPClient initialized with model: {self.model}")
 
+    async def _update_system_message_with_tools(self):
+        """Update the chatbot's system message with the list of available tools"""
+        if not self.session:
+            return
+        
+        try:
+            tools_response = await self.session.list_tools()
+            self.available_tools = [tool.name for tool in tools_response.tools]
+            if not self.available_tools:
+                app_logger.warning("No tools available from the MCP server.")
+                return
+
+            system_message = (
+                "You are an assistant with access to MCP tools. When a user requests an action, "
+                "respond with a JSON tool call in this format: "
+                "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
+                f"Available tools: {', '.join(self.available_tools)}. "
+                "Choose the appropriate tool based on the user's request."
+            )
+            # Clear existing system message and set new one
+            self.chatbot.memory.chat_memory.messages = [
+                msg for msg in self.chatbot.memory.chat_memory.messages 
+                if not isinstance(msg, SystemMessage)
+            ]
+            self.chatbot.memory.chat_memory.add_message(SystemMessage(content=system_message))
+            app_logger.info(f"Updated system message with tools: {self.available_tools}")
+        except Exception as e:
+            app_logger.error(f"Failed to update system message with tools: {str(e)}")
+            
     async def connect_to_sse_server(self, server_url: str) -> bool:
         """
         Connect to an MCP server running with SSE transport
@@ -740,28 +784,18 @@ class MCPClient:
         await self.cleanup()
 
         try:
-            # Store the context managers so they stay alive
             self._streams_context = sse_client(url=server_url)
             streams = await self._streams_context.__aenter__()
-
             self._session_context = ClientSession(*streams)
-            self.session: ClientSession = await self._session_context.__aenter__()
-
-            # Initialize
+            self.session = await self._session_context.__aenter__()
             await self.session.initialize()
-
-            # List available tools to verify connection
             app_logger.info("Initialized SSE client...")
             app_logger.info("Listing tools...")
             response = await self.session.list_tools()
-            tools = response.tools
-            app_logger.info(f"Connected to server with tools: {[tool.name for tool in tools]}")
-
-            # Initialize the chatbot
+            app_logger.info(f"Connected to server with tools: {[tool.name for tool in response.tools]}")
             await self.chatbot.initialize()
-
+            await self._update_system_message_with_tools()
             return True
-
         except Exception as e:
             error_msg = str(e).lower()
             if self._is_port_in_use_error(error_msg):
@@ -790,45 +824,23 @@ class MCPClient:
         await self.cleanup()
 
         try:
-            # On Windows, we need to use cmd.exe to run npx
             if os.name == 'nt' and command in ['npx', 'uv']:
-                # Convert the command and args to a single command string for cmd.exe
                 cmd_args = ' '.join([command] + args)
-                server_params = StdioServerParameters(
-                    command='cmd.exe',
-                    args=['/c', cmd_args]
-                )
+                server_params = StdioServerParameters(command='cmd.exe', args=['/c', cmd_args])
             else:
-                # For non-Windows systems or other commands
                 server_params = StdioServerParameters(command=command, args=args)
-
-            # Store the context managers so they stay alive
             self._streams_context = stdio_client(server_params)
             streams = await self._streams_context.__aenter__()
-
             self._session_context = ClientSession(*streams)
-            self.session: ClientSession = await self._session_context.__aenter__()
-
-            # Initialize with timeout
-            try:
-                await asyncio.wait_for(self.session.initialize(), timeout=10.0)
-            except asyncio.TimeoutError:
-                app_logger.error("Initialization timed out. The server might be unresponsive.")
-                await self.cleanup()
-                return False
-
-            # List available tools to verify connection
+            self.session = await self._session_context.__aenter__()
+            await asyncio.wait_for(self.session.initialize(), timeout=10.0)
             app_logger.info(f"Initialized {command.upper()} client...")
             app_logger.info("Listing tools...")
             response = await self.session.list_tools()
-            tools = response.tools
-            app_logger.info(f"Connected to server with tools: {[tool.name for tool in tools]}")
-
-            # Initialize the chatbot
+            app_logger.info(f"Connected to server with tools: {[tool.name for tool in response.tools]}")
             await self.chatbot.initialize()
-
+            await self._update_system_message_with_tools()  # Update after connection
             return True
-
         except Exception as e:
             error_msg = str(e).lower()
             if self._is_port_in_use_error(error_msg):
@@ -987,6 +999,74 @@ class MCPClient:
         except Exception as e:
             app_logger.error(f"Error in process_query: {str(e)}")
             return f"Error: {str(e)}"
+
+    async def process_query_stream(self, query: str):
+        """
+        Process a query with MCP tools and stream the responses
+
+        Args:
+            query: The query text to process
+
+        Yields:
+            str: Response chunks as they arrive
+            None: Signals completion
+        """
+        if not self.session:
+            yield "Not connected to an MCP server. Please connect first."
+            yield None
+            return
+
+        try:
+            tools_response = await self.session.list_tools()
+            available_tools = {tool.name: tool for tool in tools_response.tools}
+            app_logger.info(f"Available tools: {list(available_tools.keys())}")
+
+            # Stream initial response from chatbot
+            full_initial_response = ""
+            async for chunk in self.chatbot.chat_stream(query):
+                if chunk is None:
+                    break
+                full_initial_response += chunk
+                yield chunk  # Stream chatbot response chunks
+
+            # Check for tool calls in the initial response
+            tool_call_pattern = r"\{\s*\"name\":\s*\"([^\"]+)\"\s*,\s*\"arguments\":\s*(\{[^}]+\})\s*\}"
+            print("!full_initial_response", full_initial_response)
+            matches = re.findall(tool_call_pattern, full_initial_response)
+            print("!matches", matches)
+
+            if matches:
+                for tool_name, args_str in matches:
+                    if tool_name in available_tools:
+                        try:
+                            tool_args = json.loads(args_str)
+                            app_logger.info(f"Executing tool {tool_name} with args: {tool_args}")
+                            result = await self.session.call_tool(tool_name, tool_args)
+                            result_content = str(getattr(result, 'content', result))
+                            
+                            # Stream tool result
+                            tool_message = f"[Tool {tool_name} result: {result_content}]"
+                            yield tool_message
+
+                            # Follow-up with chatbot streaming
+                            follow_up = f"Tool {tool_name} returned: {result_content}. Provide your final answer."
+                            async for chunk in self.chatbot.chat_stream(follow_up):
+                                if chunk is None:
+                                    break
+                                yield chunk
+                        except Exception as e:
+                            error_msg = f"[Error calling tool {tool_name}: {str(e)}]"
+                            yield error_msg
+                    else:
+                        yield f"[Tool {tool_name} not available]"
+
+            # Signal completion
+            yield None
+
+        except Exception as e:
+            app_logger.error(f"Error in process_query_stream: {str(e)}")
+            yield f"Error: {str(e)}"
+            yield None
 
     async def process_direct_query(self, query: str) -> str:
         """
