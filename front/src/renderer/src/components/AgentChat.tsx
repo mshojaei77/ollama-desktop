@@ -150,6 +150,12 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
     }
   };
 
+  // Function to detect if text contains Persian or Arabic characters
+  const containsRTLText = (text: string): boolean => {
+    const rtlRegex = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+    return rtlRegex.test(text);
+  };
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Header */}
@@ -246,7 +252,16 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
                     <div className="w-2 h-2 bg-current rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
                   </div>
                 ) : (
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  <p 
+                    className="whitespace-pre-wrap"
+                    style={{
+                      fontFamily: containsRTLText(message.content) ? "'Vazir', sans-serif" : 'inherit',
+                      direction: containsRTLText(message.content) ? 'rtl' : 'ltr',
+                      textAlign: containsRTLText(message.content) ? 'right' : 'left'
+                    }}
+                  >
+                    {message.content}
+                  </p>
                 )}
               </div>
             </div>
@@ -267,6 +282,11 @@ function AgentChat({ agentId, onBack }: AgentChatProps): JSX.Element {
             className="flex-1 bg-background border border-border rounded-md py-2 pl-3 pr-10 resize-none max-h-[120px] min-h-[44px]"
             rows={1}
             disabled={isLoading}
+            style={{
+              fontFamily: containsRTLText(input) ? "'Vazir', sans-serif" : 'inherit',
+              direction: containsRTLText(input) ? 'rtl' : 'ltr',
+              textAlign: containsRTLText(input) ? 'right' : 'left'
+            }}
           />
           <button
             type="submit"

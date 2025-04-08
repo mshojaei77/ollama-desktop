@@ -1061,19 +1061,38 @@ async def example_with_mcp():
 
 # ----- Main Function -----
 
-def open_browser():
-    """Open browser after a short delay to ensure server is up"""
-    time.sleep(1.5)  # Wait for server to start
-    webbrowser.open("http://localhost:8000/docs")
+import subprocess
+import sys
+import os
+
+def start_frontend():
+    """Start the frontend development server in a separate terminal"""
+    try:
+        frontend_cmd = "cd front && npm run dev"
+        
+        if sys.platform.startswith('win'):
+            # Windows: run without showing command prompt
+            subprocess.Popen(frontend_cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        elif sys.platform.startswith('darwin'):
+            # macOS: run in background
+            subprocess.Popen(['bash', '-c', frontend_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # Linux: run in background
+            subprocess.Popen(['bash', '-c', frontend_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+        app_logger.info("Started frontend development server in background")
+    except Exception as e:
+        app_logger.error(f"Failed to start frontend: {str(e)}")
 
 def start_server():
-    """Start the FastAPI server and open Swagger UI"""
-    # Start browser in a separate thread so it doesn't block the server
-    threading.Thread(target=open_browser).start()
+    """Start the FastAPI server"""
+    # Start frontend in a separate terminal
+    start_frontend()
+    # Start the API server
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    # Start the FastAPI server with auto-opening browser
+    # Start the FastAPI server and frontend
     start_server()    
     # Examples of programmatic usage are defined above
     # To run them directly:

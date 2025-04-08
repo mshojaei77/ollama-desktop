@@ -31,7 +31,7 @@ class PersianAssistant(BaseAgent):
             name="Persian Assistant",
             description="A specialized assistant for Persian/Farsi language support.",
             icon="https://picsum.photos/300",  # Placeholder icon
-            tags=["persian", "farsi", "language"],
+            tags=["persian", "farsi"],
             config={
                 "default_model": "mshojaei77/gemma3persian",
                 "system_message": """شما یک دستیار هوش مصنوعی مفید، خلاق و آگاه هستید. 
