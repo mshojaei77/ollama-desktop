@@ -179,11 +179,8 @@ const MessageContainer = (): JSX.Element => {
                       alt=""
                       className="w-6 h-6 rounded-full"
                       onError={(e) => {
-                        // Fallback to default icon
-                        e.currentTarget.src = new URL(
-                          '../assets/models/default.png',
-                          import.meta.url
-                        ).href
+                        // Fallback to default icon using a root-relative path
+                        e.currentTarget.src = '/assets/models/default.png';
                       }}
                     />
                   </div>

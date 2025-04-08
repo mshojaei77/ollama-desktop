@@ -5,7 +5,10 @@ export const getModelBaseName = (modelName: string): string => {
 
   const nameWithoutTag = modelName.split(':')[0]
 
-  const repoName = nameWithoutTag.includes('/') ? nameWithoutTag.split('/')[1] : nameWithoutTag
+  // Get the last part after slash for models with paths
+  const repoName = nameWithoutTag.includes('/') 
+    ? nameWithoutTag.split('/')[nameWithoutTag.split('/').length - 1] 
+    : nameWithoutTag
 
   if (repoName.includes(' ')) {
     return repoName.split(' ')[0].toLowerCase()
@@ -42,11 +45,16 @@ export const getAgentIconPath = (agentId: string): string => {
 }
 
 export const getModelDisplayName = (modelName: string): string => {
-  if (modelName.includes('/')) {
-    return modelName.split('/')[1]
+  // First, remove any tags (e.g., ":latest")
+  const nameWithoutTag = modelName.split(':')[0];
+  
+  // If there are slashes, get the last part after the slash
+  if (nameWithoutTag.includes('/')) {
+    const parts = nameWithoutTag.split('/');
+    return parts[parts.length - 1];
   }
-
-  return modelName
+  
+  return modelName;
 }
 
 export const copyToClipboardWithFeedback = (content: string, element: HTMLButtonElement): void => {

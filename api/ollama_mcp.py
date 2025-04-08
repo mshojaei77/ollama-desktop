@@ -937,12 +937,12 @@ class OllamaMCPPackage:
     """Main package class for using Ollama with MCP"""
 
     @staticmethod
-    async def create_client(model_name: str = None) -> MCPClient:
+    async def create_client(model_name: str = "llama3.2") -> MCPClient:
         """
         Create and return a new MCP client
 
         Args:
-            model_name: Optional model name to use
+            model_name: Optional model name to use (defaults to "llama3.2")
 
         Returns:
             MCPClient: Initialized client

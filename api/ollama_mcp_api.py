@@ -77,6 +77,9 @@ app.include_router(agents_router)
 active_clients: Dict[str, MCPClient] = {}
 active_chatbots: Dict[str, OllamaChatbot] = {}
 
+# Global cache for models
+_model_cache: Optional[Dict[str, Any]] = None
+_CACHE_EXPIRY_SECONDS = 300 # Cache models for 5 minutes
 
 # ----- Pydantic Models for Request/Response -----
 
@@ -714,56 +717,61 @@ async def get_recent_models(limit: int = 5):
         app_logger.error(f"Error getting recent models: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting recent models: {str(e)}")
 
-@app.get("/models")
-async def get_models(sort_by: Optional[str] = None):
+@app.get("/models", tags=["Models"])
+async def get_models():
     """
-    Get all available models, ensuring the database is updated with models
-    currently available in Ollama, sorted by specified criteria.
-    
-    Optional query parameter:
-    - sort_by: 'last_used' to sort by most recently used, 'name' for alphabetical
+    Get all available models from Ollama.
+
+    Models are fetched directly from Ollama and cached in memory for 5 minutes.
     """
+    global _model_cache
+    current_time = time.time()
+
+    # Check cache
+    if _model_cache and (current_time - _model_cache.get('timestamp', 0)) < _CACHE_EXPIRY_SECONDS:
+        app_logger.info("Returning cached models.")
+        return {"models": _model_cache['models']}
+
     try:
-        app_logger.info(f"Getting models with sort_by={sort_by}")
-        
+        app_logger.info("Fetching models directly from Ollama.")
         # 1. Get currently available models from Ollama
+        # This function should ideally return List[Dict[str, Any]] or List[str]
         available_models = await OllamaMCPPackage.get_available_models()
-        app_logger.info(f"Available models from Ollama: {available_models}")
-        
-        # 2. Try to ensure each available model exists in the database
-        # But continue even if this part fails (especially for tests with mocks)
+        app_logger.info(f"Available models fetched from Ollama: {available_models}")
+
+        # 2. Format the models for the response (handle list of strings or dicts)
+        models_list = []
         if available_models:
-            try:
-                for model_info in available_models:
-                    # Assuming get_available_models returns a list of dicts with a 'name' key
-                    # or a list of strings (handle both formats)
-                    model_name = model_info.get('name') if isinstance(model_info, dict) else model_info
-                    if model_name:
-                        await db.ensure_model_exists(model_name)
-            except Exception as db_error:
-                # Log but don't fail completely - this handles mock issues in tests
-                app_logger.warning(f"Could not update models in database: {str(db_error)}. Continuing with available models.")
-                    
-        # 3. Get models from the database with sorting if possible
-        try:
-            models = await db.get_models(sort_by)
-            app_logger.info(f"Models from database: {models}")
-        except Exception as db_error:
-            # If database retrieval fails, fall back to direct model list
-            app_logger.warning(f"Could not retrieve sorted models from database: {str(db_error)}. Using available models directly.")
-            # Convert to format expected in the response
-            models = []
-            for model_info in available_models:
+             for model_info in available_models:
                 if isinstance(model_info, dict):
-                    models.append(model_info)
+                    # Ensure 'name' key exists, include other fields if present
+                    model_data = {
+                        'name': model_info.get('name', 'Unknown Model Name'),
+                        **{k: v for k, v in model_info.items() if k != 'name'}
+                    }
+                    models_list.append(model_data)
+                elif isinstance(model_info, str):
+                    # If it's just a string, create a basic dictionary
+                    models_list.append({"name": model_info})
                 else:
-                    models.append({"name": model_info, "last_used": None})
-        
-        return {"models": models}
-        
+                     app_logger.warning(f"Unexpected model info format received from Ollama: {model_info}")
+        else:
+             app_logger.warning("Received empty or null model list from Ollama.")
+
+
+        # 3. Update cache
+        _model_cache = {
+            'models': models_list,
+            'timestamp': current_time
+        }
+        app_logger.info(f"Updated model cache with {len(models_list)} models.")
+
+        return {"models": models_list}
+
     except Exception as e:
-        app_logger.error(f"Error getting models: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error getting models: {str(e)}")
+        app_logger.error(f"Error getting models directly from Ollama: {str(e)}", exc_info=True)
+        # If fetching fails, raise error. Consider returning stale cache if critical.
+        raise HTTPException(status_code=500, detail=f"Error getting models from Ollama: {str(e)}")
 
 @app.get("/chats", response_model=AvailableChatsResponse, tags=["Sessions"])
 async def get_chats(
