@@ -7,6 +7,8 @@ from typing import Optional, List, Dict, Any, Union, Callable
 from contextlib import AsyncExitStack
 import logging
 from pathlib import Path
+import tempfile
+import shutil
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
@@ -35,6 +37,18 @@ import anyio
 from logger import app_logger
 from config_io import read_ollama_config
 
+# Added imports for RAG
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.docstore.document import Document
+
+# Added import for PDF processing
+try:
+    import pypdf
+except ImportError:
+    pypdf = None # Handle optional dependency
+
 load_dotenv()  # load environment variables from .env
 
 class BaseChatbot:
@@ -58,6 +72,9 @@ class BaseChatbot:
         self.system_message = system_message
         self.verbose = verbose
         self.memory = ConversationBufferMemory(return_messages=True)
+        # Added vector store attribute
+        self.vector_store: Optional[FAISS] = None
+        self.vector_store_path: Optional[Path] = None # Store path for persistence if needed
 
     async def initialize(self) -> None:
         """Initialize the chatbot - to be implemented by subclasses"""
@@ -71,6 +88,22 @@ class BaseChatbot:
         """Clean up any resources used by the chatbot"""
         # Base implementation resets memory
         self.memory = ConversationBufferMemory(return_messages=True)
+        # Clean up vector store if it exists and was stored temporarily
+        if self.vector_store_path and self.vector_store_path.exists():
+             try:
+                 # Check if it's a directory before removing
+                 if self.vector_store_path.is_dir():
+                     shutil.rmtree(self.vector_store_path)
+                     app_logger.info(f"Removed temporary vector store at {self.vector_store_path}")
+                 elif self.vector_store_path.is_file():
+                    # FAISS can also save as a single file with .faiss extension
+                    self.vector_store_path.unlink()
+                    app_logger.info(f"Removed temporary vector store file at {self.vector_store_path}")
+
+             except Exception as e:
+                 app_logger.error(f"Error removing vector store at {self.vector_store_path}: {e}")
+        self.vector_store = None
+        self.vector_store_path = None
 
     def get_history(self) -> List[BaseMessage]:
         """Get the conversation history"""
@@ -93,6 +126,11 @@ class OllamaChatbot(BaseChatbot):
         temperature: float = 0.7,
         top_p: float = 0.9,
         verbose: bool = False,
+        # Added embedding model parameter
+        embedding_model_name: str = "nomic-embed-text",
+        # Added text splitter parameters
+        chunk_size: int = 1000,
+        chunk_overlap: int = 100,
     ):
         """
         Initialize the Ollama chatbot.
@@ -104,6 +142,9 @@ class OllamaChatbot(BaseChatbot):
             temperature: Temperature parameter for generation
             top_p: Top-p parameter for generation
             verbose: Whether to output verbose logs
+            embedding_model_name: Name of the Ollama embedding model to use
+            chunk_size: Size of text chunks for vector store
+            chunk_overlap: Overlap between text chunks
         """
         super().__init__(model_name, system_message, verbose)
         self.base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -111,6 +152,15 @@ class OllamaChatbot(BaseChatbot):
         self.top_p = top_p
         self.chat_model = None
         self.ready = False
+        # Initialize embeddings and text splitter
+        self.embedding_model_name = embedding_model_name
+        self.embeddings = OllamaEmbeddings(model=self.embedding_model_name, base_url=self.base_url)
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=['\n\n', '\n', '. ', ' ', ''] # More robust separators
+        )
+        self._temp_dir_for_vs = None # To hold temp directory object
 
     async def initialize(self) -> None:
         """Initialize the Ollama chatbot"""
@@ -133,20 +183,125 @@ class OllamaChatbot(BaseChatbot):
 
             # Set system message if provided
             if self.system_message:
-                self.memory.chat_memory.add_message(SystemMessage(content=self.system_message))
+                # Check if memory already has messages to avoid duplication on re-init
+                current_history = self.memory.chat_memory.messages
+                if not current_history or not isinstance(current_history[0], SystemMessage):
+                     self.memory.chat_memory.add_message(SystemMessage(content=self.system_message))
+                elif isinstance(current_history[0], SystemMessage) and current_history[0].content != self.system_message:
+                     # Replace existing system message if different
+                     current_history[0] = SystemMessage(content=self.system_message)
 
         except Exception as e:
             app_logger.error(f"Failed to initialize Ollama chatbot: {str(e)}")
             self.ready = False
             raise
 
+    async def add_file_context(self, file_path: Union[str, Path], file_name: str):
+        """
+        Processes a file, extracts text, creates embeddings, and updates the vector store.
+
+        Args:
+            file_path: Path to the uploaded file.
+            file_name: Original name of the file (used for metadata).
+        """
+        if not self.ready:
+            await self.initialize()
+        if not self.ready:
+             raise RuntimeError("Chatbot could not be initialized.")
+
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found at {file_path}")
+
+        app_logger.info(f"Processing file for context: {file_name} ({file_path.suffix})")
+        text = ""
+        try:
+            if file_path.suffix == '.pdf':
+                if pypdf:
+                    reader = pypdf.PdfReader(file_path)
+                    text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+                else:
+                     app_logger.error("pypdf is not installed. Cannot process PDF files.")
+                     raise ImportError("pypdf is required for PDF processing.")
+            elif file_path.suffix in ['.txt', '.md']:
+                text = file_path.read_text(encoding='utf-8')
+            else:
+                app_logger.warning(f"Unsupported file type: {file_path.suffix}")
+                return # Or raise error
+
+            if not text:
+                app_logger.warning(f"No text extracted from file: {file_name}")
+                return
+
+            # Split text into documents
+            documents = self.text_splitter.create_documents(
+                [text],
+                metadatas=[{"source": file_name}] # Add source metadata
+            )
+            app_logger.info(f"Split file {file_name} into {len(documents)} documents.")
+
+            # Create or update FAISS vector store
+            if not self.vector_store:
+                # Create a temporary directory for the FAISS index
+                # Store the TemporaryDirectory object to ensure it's cleaned up later
+                self._temp_dir_for_vs = tempfile.TemporaryDirectory()
+                self.vector_store_path = Path(self._temp_dir_for_vs.name) / "faiss_index"
+
+                app_logger.info(f"Creating new vector store at {self.vector_store_path}")
+                self.vector_store = await asyncio.to_thread(
+                    FAISS.from_documents, documents, self.embeddings
+                )
+                # Save locally to the temp path
+                await asyncio.to_thread(self.vector_store.save_local, str(self.vector_store_path))
+
+            else:
+                 app_logger.info(f"Adding documents to existing vector store.")
+                 # FAISS doesn't have an async add_documents, run in thread
+                 await asyncio.to_thread(self.vector_store.add_documents, documents)
+                 # Re-save after adding
+                 await asyncio.to_thread(self.vector_store.save_local, str(self.vector_store_path))
+
+            app_logger.info(f"Successfully added context from {file_name} to vector store.")
+
+        except Exception as e:
+            app_logger.error(f"Error processing file {file_name}: {str(e)}", exc_info=True)
+            # Clean up temp file if it exists and is the one we're processing
+            # Note: The API layer should handle cleanup of the originally uploaded temp file
+            raise # Re-raise the exception to be caught by the API layer
+
+    async def _get_context_from_query(self, query: str, k: int = 3) -> str:
+        """Retrieve relevant context from the vector store"""
+        if not self.vector_store:
+            return ""
+
+        try:
+            app_logger.info(f"Searching vector store for query: {query[:50]}...")
+            # Run similarity search in a thread
+            results = await asyncio.to_thread(
+                 self.vector_store.similarity_search, query, k=k
+            )
+            if results:
+                context = "\n---\n".join([doc.page_content for doc in results])
+                app_logger.info(f"Retrieved {len(results)} context snippets.")
+                # print(f"CONTEXT:\n{context}\n---------") # for debugging
+                return f"\n\nRelevant Context from Uploaded Documents:\n---\n{context}\n---"
+            else:
+                app_logger.info("No relevant context found in vector store.")
+                return ""
+        except Exception as e:
+            app_logger.error(f"Error during similarity search: {str(e)}")
+            return ""
+
     async def chat(self, message: str) -> str:
-        """Process a chat message using the Ollama model"""
+        """Process a chat message using the Ollama model, potentially with RAG"""
         if not self.ready:
             await self.initialize()
 
         if not self.ready:
             return "Chatbot is not ready. Please check the logs and try again."
+
+        # Get relevant context if vector store exists
+        context = await self._get_context_from_query(message)
 
         # Get current chat history
         history = self.get_history()
@@ -155,16 +310,26 @@ class OllamaChatbot(BaseChatbot):
         self.memory.chat_memory.add_message(HumanMessage(content=message))
 
         try:
-            # Prepare messages
-            messages = history + [HumanMessage(content=message)]
+            # Prepare messages for the LLM
+            messages_for_llm = history + [HumanMessage(content=message)]
 
+            # Augment the *last* human message with context for the LLM
+            # Or, prepend context to the whole list? Let's augment last message.
+            if context:
+                 # Check if the last message is HumanMessage, modify its content
+                 if messages_for_llm and isinstance(messages_for_llm[-1], HumanMessage):
+                     messages_for_llm[-1].content = f"{message}{context}"
+                 else: # Should not happen with current logic, but fallback just in case
+                     messages_for_llm.append(HumanMessage(content=f"{message}{context}"))
+
+            app_logger.debug(f"Invoking LLM with {len(messages_for_llm)} messages.")
             # Invoke the model
             response = await asyncio.to_thread(
                 self.chat_model.invoke,
-                messages
+                messages_for_llm # Use the potentially augmented messages
             )
 
-            # Add the response to memory
+            # Add the AI response to memory
             self.memory.chat_memory.add_message(AIMessage(content=response.content))
 
             return response.content
@@ -176,7 +341,7 @@ class OllamaChatbot(BaseChatbot):
 
     async def chat_stream(self, message: str):
         """
-        Process a chat message using the Ollama model and stream the responses
+        Process a chat message using the Ollama model and stream the responses, potentially with RAG
 
         This is an async generator that yields response chunks as they arrive
         from the model. Used for SSE and other streaming interfaces.
@@ -188,19 +353,30 @@ class OllamaChatbot(BaseChatbot):
             yield "Chatbot is not ready. Please check the logs and try again."
             return
 
+        # Get relevant context if vector store exists
+        context = await self._get_context_from_query(message)
+
         # Get current chat history
         history = self.get_history()
 
-        # Add human message to memory
+        # Add human message to memory *before* augmenting for LLM
         self.memory.chat_memory.add_message(HumanMessage(content=message))
 
         try:
-            # Prepare messages
-            messages = history + [HumanMessage(content=message)]
+            # Prepare messages for the LLM
+            messages_for_llm = history + [HumanMessage(content=message)]
 
+            # Augment the *last* human message with context for the LLM
+            if context:
+                 if messages_for_llm and isinstance(messages_for_llm[-1], HumanMessage):
+                     messages_for_llm[-1].content = f"{message}{context}"
+                 else:
+                     messages_for_llm.append(HumanMessage(content=f"{message}{context}"))
+
+            app_logger.debug(f"Streaming LLM with {len(messages_for_llm)} messages.")
             # Get a streaming response from the model
             stream_gen = await asyncio.to_thread(
-                lambda: self.chat_model.stream(messages)
+                lambda: self.chat_model.stream(messages_for_llm) # Use augmented messages
             )
 
             # Initialize accumulated response to save to memory later
@@ -218,7 +394,8 @@ class OllamaChatbot(BaseChatbot):
                     full_response += chunk
                     yield chunk
 
-            # Add the complete response to memory
+            # Add the complete response to memory *after* streaming finishes
+            # Ensure we add the *original* AI response, not the augmented one used internally
             self.memory.chat_memory.add_message(AIMessage(content=full_response))
 
             # Yield None to indicate we're done
@@ -243,10 +420,24 @@ class OllamaChatbot(BaseChatbot):
             raise
 
     async def cleanup(self) -> None:
-        """Clean up resources used by the Ollama chatbot"""
+        """Clean up resources used by the Ollama chatbot, including temp vector store"""
+        # Clean up temporary directory if it was created
+        if self._temp_dir_for_vs:
+            try:
+                self._temp_dir_for_vs.cleanup() # This handles directory removal
+                app_logger.info(f"Cleaned up temporary directory for vector store: {self._temp_dir_for_vs.name}")
+            except Exception as e:
+                 app_logger.error(f"Error cleaning up temporary directory {self._temp_dir_for_vs.name}: {e}")
+            finally:
+                 self._temp_dir_for_vs = None
+                 self.vector_store_path = None # Path becomes invalid after cleanup
+
+        # Call superclass cleanup which handles memory and resets vector_store attribute
         await super().cleanup()
         self.chat_model = None
         self.ready = False
+        # Ensure vector_store is None after cleanup
+        self.vector_store = None
 
 
 class MCPClient:

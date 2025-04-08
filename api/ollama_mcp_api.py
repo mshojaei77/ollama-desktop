@@ -9,9 +9,12 @@ import webbrowser  # Add this import
 import threading
 import time
 from typing import Dict, List, Optional, Any, Union, AsyncGenerator
+import tempfile
+import shutil
+from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,6 +53,10 @@ app = FastAPI(
         {
             "name": "Agents",
             "description": "Operations for working with specialized AI agents"
+        },
+        {
+            "name": "Context",
+            "description": "Operations for adding context from files to sessions"
         }
     ]
 )
@@ -159,6 +166,8 @@ async def cleanup_session(session_id: str):
     
     # Mark session as inactive in database
     await db.deactivate_session(session_id)
+
+ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
 
 # ----- API Endpoints -----
@@ -925,6 +934,89 @@ async def shutdown_event():
     # Clean up agent registry resources
     await agent_registry.cleanup()
     app_logger.info("Agent registry cleaned up")
+
+@app.post("/sessions/{session_id}/upload_file", tags=["Context"])
+async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
+    """
+    Upload a file (.txt, .md, .pdf) to add its content as context to a session.
+
+    - Validates the session ID and file type.
+    - Saves the file temporarily.
+    - Processes the file content and adds it to the session's vector store.
+    - Cleans up the temporary file.
+    """
+    chatbot: Optional[OllamaChatbot] = None
+
+    # Check if session exists in either active_chatbots or active_clients
+    if session_id in active_chatbots:
+        chatbot = active_chatbots[session_id]
+    elif session_id in active_clients:
+        # MCPClient has an internal chatbot instance
+        client = active_clients[session_id]
+        if hasattr(client, 'chatbot') and isinstance(client.chatbot, OllamaChatbot):
+            chatbot = client.chatbot
+        else:
+             raise HTTPException(status_code=400, detail=f"Session {session_id} is an MCP client without a compatible chatbot instance.")
+    else:
+        # Verify if the session exists in the database but isn't active in memory
+        db_session = await db.get_session(session_id)
+        if db_session:
+             # Session exists but isn't loaded. We could potentially load it here,
+             # but for simplicity, let's require it to be active.
+             # Or, we could decide to initialize it on the fly if needed.
+             raise HTTPException(status_code=404, detail=f"Session {session_id} exists but is not currently active. Please initialize it first.")
+        else:
+             raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    if not chatbot:
+         raise HTTPException(status_code=500, detail=f"Could not retrieve chatbot instance for session {session_id}.")
+
+    # Validate file extension
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed extensions are: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+
+    # Create a temporary directory to store the uploaded file
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_file_path = Path(temp_dir) / file.filename
+
+        # Save the uploaded file to the temporary path
+        try:
+            with open(temp_file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            app_logger.info(f"Temporarily saved uploaded file to: {temp_file_path}")
+        except Exception as e:
+             app_logger.error(f"Failed to save uploaded file: {e}")
+             raise HTTPException(status_code=500, detail="Failed to save uploaded file.")
+        finally:
+             # Ensure the file pointer is closed, even if copyfileobj fails
+             file.file.close()
+
+        # Process the file using the chatbot's method
+        try:
+            await chatbot.add_file_context(temp_file_path, file.filename)
+            app_logger.info(f"Successfully processed file context for session {session_id} from {file.filename}")
+            return {"message": f"File '{file.filename}' processed and added to context for session {session_id}"}
+        except FileNotFoundError as e:
+             app_logger.error(f"File not found during processing: {e}")
+             raise HTTPException(status_code=500, detail="Internal error: Saved file could not be found for processing.")
+        except ImportError as e:
+            # Specifically catch missing pypdf
+            if "pypdf" in str(e):
+                app_logger.error(f"PDF processing error for {file.filename}: {e}")
+                raise HTTPException(status_code=400, detail="Cannot process PDF file: pypdf library is not installed.")
+            else:
+                app_logger.error(f"Import error during processing {file.filename}: {e}")
+                raise HTTPException(status_code=500, detail=f"Internal server error during file processing: {e}")
+        except Exception as e:
+            app_logger.error(f"Failed to process file context for session {session_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
+    # The temporary directory and its contents (temp_file_path) are automatically removed here
+    # when the 'with' block exits.
 
 
 # ----- Programmatic API Examples -----
