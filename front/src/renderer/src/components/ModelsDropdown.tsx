@@ -1,6 +1,7 @@
 import { ModelOption } from '../fetch/types'
 import { getIconPath, getModelDisplayName } from '@renderer/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
+import { useEffect } from 'react'
 
 export const ModelsDropdown = ({
   models,
@@ -22,11 +23,39 @@ export const ModelsDropdown = ({
     return model
   })
 
+  // Auto-select first model if none is selected and models are available
+  useEffect(() => {
+    if (!isLoading && formattedModels.length > 0 && !selectedModel) {
+      onChange(formattedModels[0].name)
+    }
+  }, [isLoading, formattedModels, selectedModel, onChange])
+
+  // Use the first model's value as default if no value is selected
+  const selectValue = selectedModel || (formattedModels.length > 0 ? formattedModels[0].name : '')
+
   return (
     <div className="relative min-w-[150px] max-w-[300px] mx-auto">
-      <Select value={selectedModel} onValueChange={onChange} disabled={isLoading || disabled}>
-        <SelectTrigger className="w-full pl-10 rounded-xl ">
-          <SelectValue placeholder={isLoading ? 'Loading models...' : 'Select model'} />
+      <Select value={selectValue} onValueChange={onChange} disabled={isLoading || disabled}>
+        <SelectTrigger className="w-full rounded-xl text-[hsl(var(--foreground))]">
+          <div className="flex items-center gap-2">
+            {!isLoading && selectValue && (
+              <img
+                src={getIconPath(selectValue)}
+                alt=""
+                className="w-6 h-6 rounded-full"
+                onError={(e) => {
+                  e.currentTarget.src = new URL('../assets/models/default.png', import.meta.url).href
+                }}
+              />
+            )}
+            {!isLoading && selectValue ? (
+              <span className="flex-1 text-left truncate">
+                {getModelDisplayName(selectValue)}
+              </span>
+            ) : (
+              <SelectValue placeholder={isLoading ? 'Loading models...' : 'Select model'} />
+            )}
+          </div>
         </SelectTrigger>
 
         <SelectContent className="max-h-60 overflow-y-auto min-w-[150px] max-w-[300px]">
@@ -47,19 +76,6 @@ export const ModelsDropdown = ({
           )}
         </SelectContent>
       </Select>
-
-      {!isLoading && selectedModel && (
-        <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none">
-          <img
-            src={getIconPath(selectedModel)}
-            alt=""
-            className="w-6 h-6 rounded-full"
-            onError={(e) => {
-              e.currentTarget.src = new URL('../assets/models/default.png', import.meta.url).href
-            }}
-          />
-        </div>
-      )}
     </div>
   )
 }
