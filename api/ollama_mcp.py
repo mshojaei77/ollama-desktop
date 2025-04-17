@@ -35,12 +35,12 @@ from dotenv import load_dotenv
 import anyio
 
 # Import the logger
-from logger import app_logger
-from config_io import read_ollama_config
+from api.logger import app_logger
+from api.config_io import read_ollama_config
 
 # Added imports for RAG
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.docstore.document import Document
 
@@ -58,6 +58,7 @@ class BaseChatbot:
     def __init__(
         self,
         model_name: str = "llama3.2",
+        vision_model_name: str = "granite3.2-vision",
         system_message: Optional[str] = None,
         verbose: bool = False,
     ):
@@ -76,6 +77,8 @@ class BaseChatbot:
         # Added vector store attribute
         self.vector_store: Optional[FAISS] = None
         self.vector_store_path: Optional[Path] = None # Store path for persistence if needed
+        # Store the vision model name
+        self.vision_model_name = vision_model_name
 
     async def initialize(self) -> None:
         """Initialize the chatbot - to be implemented by subclasses"""
@@ -122,6 +125,7 @@ class OllamaChatbot(BaseChatbot):
     def __init__(
         self,
         model_name: str = "llama3.2",
+        vision_model_name: str = "granite3.2-vision",
         system_message: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.7,
@@ -138,6 +142,7 @@ class OllamaChatbot(BaseChatbot):
 
         Args:
             model_name: Name of the Ollama model to use
+            vision_model_name: Name of the Ollama vision model to use
             system_message: Optional system message to set context
             base_url: Base URL for the Ollama API (default: http://localhost:11434)
             temperature: Temperature parameter for generation
@@ -147,7 +152,7 @@ class OllamaChatbot(BaseChatbot):
             chunk_size: Size of text chunks for vector store
             chunk_overlap: Overlap between text chunks
         """
-        super().__init__(model_name, system_message, verbose)
+        super().__init__(model_name, vision_model_name, system_message, verbose)
         self.base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.temperature = temperature
         self.top_p = top_p
@@ -162,6 +167,8 @@ class OllamaChatbot(BaseChatbot):
             separators=['\n\n', '\n', '. ', ' ', ''] # More robust separators
         )
         self._temp_dir_for_vs = None # To hold temp directory object
+        # Store the vision model name
+        self.vision_model_name = vision_model_name
 
     async def initialize(self) -> None:
         """Initialize the Ollama chatbot"""
@@ -599,6 +606,77 @@ class OllamaChatbot(BaseChatbot):
         # Ensure vector_store is None after cleanup
         self.vector_store = None
 
+    async def chat_with_image(self,
+                              message: str,
+                              image_paths: List[Union[str, Path]],
+                              temperature: Optional[float] = None,
+                              top_p: Optional[float] = None) -> str:
+        """
+        Process a message with image context using the specified vision model.
+
+        Args:
+            message: The user's text message.
+            image_paths: A list of paths to the images.
+            temperature: Optional temperature override for this call.
+            top_p: Optional top_p override for this call.
+
+        Returns:
+            The response string from the vision model.
+        """
+        if not self.ready:
+            await self.initialize()
+
+        if not self.ready:
+            return "Chatbot is not ready. Please check the logs and try again."
+
+        if not self.vision_model_name:
+            return "No vision model specified for this chatbot."
+
+        # Ensure image paths are strings
+        image_paths_str = [str(p) for p in image_paths]
+
+        # Prepare messages for the Ollama API
+        messages = [
+            {
+                'role': 'user',
+                'content': message,
+                'images': image_paths_str,
+            }
+        ]
+
+        try:
+            import ollama
+            async_client = ollama.AsyncClient(host=self.base_url)
+
+            app_logger.info(f"Sending request to vision model: {self.vision_model_name}")
+            response = await async_client.chat(
+                model=self.vision_model_name,
+                messages=messages,
+                options={
+                    "temperature": temperature if temperature is not None else self.temperature,
+                    "top_p": top_p if top_p is not None else self.top_p
+                }
+            )
+
+            response_content = response.get('message', {}).get('content', '')
+            app_logger.info(f"Received vision response: {response_content[:100]}...")
+
+            # Add interaction to memory (simplify image representation for memory)
+            image_context_placeholder = f"[User provided {len(image_paths)} image(s)]"
+            self.memory.chat_memory.add_message(HumanMessage(content=f"{message} {image_context_placeholder}"))
+            self.memory.chat_memory.add_message(AIMessage(content=response_content))
+
+            return response_content
+
+        except ImportError:
+            error_msg = "The 'ollama' library is required for vision capabilities. Please install it: pip install ollama"
+            app_logger.error(error_msg)
+            return error_msg
+        except Exception as e:
+            error_msg = f"Error during vision chat: {str(e)}"
+            app_logger.error(error_msg, exc_info=True)
+            return error_msg
+
 
 class MCPClient:
     """Client for connecting to MCP servers with Ollama integration"""
@@ -952,6 +1030,7 @@ class OllamaMCPPackage:
     @staticmethod
     async def create_standalone_chatbot(
         model_name: str = "llama3.2",
+        vision_model_name: str = "granite3.2-vision",
         system_message: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.7
@@ -961,6 +1040,7 @@ class OllamaMCPPackage:
 
         Args:
             model_name: Name of the Ollama model to use
+            vision_model_name: Name of the Ollama vision model to use
             system_message: Optional system message to set context
             base_url: Base URL for the Ollama API
             temperature: Temperature parameter for generation
@@ -970,6 +1050,7 @@ class OllamaMCPPackage:
         """
         chatbot = OllamaChatbot(
             model_name=model_name,
+            vision_model_name=vision_model_name,
             system_message=system_message,
             base_url=base_url,
             temperature=temperature
@@ -1077,7 +1158,7 @@ class OllamaMCPPackage:
             Dict[str, Any]: Configuration dictionary with server information
         """
         try:
-            from config_io import read_ollama_config
+            from api.config_io import read_ollama_config
             config = read_ollama_config()
 
             if config and 'mcpServers' in config:
@@ -1114,7 +1195,35 @@ class OllamaMCPPackage:
 
 if __name__ == "__main__":
     async def main():
-        info = await OllamaMCPPackage.get_model_info("llama3.2")
-        print(info)
+        # Test standalone chatbot
+        print("--- Testing Standalone Chatbot ---")
+        chatbot = await OllamaMCPPackage.create_standalone_chatbot(
+            model_name="llama3.2",
+            vision_model_name="granite3.2-vision" # Specify vision model here too
+        )
+        response = await chatbot.chat("Hello! Tell me a short story.")
+        print(f"Chatbot Response: {response}")
+        await chatbot.cleanup()
+        print("\n")
+
+        # Test Vision Chatbot
+        print("--- Testing Vision Chatbot ---")
+        # Ensure the image file exists relative to this script
+        # You might need to create a dummy 'sample.png' or change the path
+        image_file = Path(__file__).parent / "sample.png"
+
+        if image_file.exists():
+            vision_chatbot = await OllamaMCPPackage.create_standalone_chatbot(
+                model_name="llama3.2", # Regular model for text fallback if needed
+                vision_model_name="granite3.2-vision" # Actual vision model used by chat_with_image
+            )
+            vision_prompt = "Describe this image in detail."
+            vision_response = await vision_chatbot.chat_with_image(vision_prompt, [image_file])
+            print(f"Vision Prompt: {vision_prompt}")
+            print(f"Vision Response: {vision_response}")
+            await vision_chatbot.cleanup()
+        else:
+            print(f"Skipping vision test: Image file not found at {image_file}")
+            print("Please create a 'sample.png' in the same directory as this script.")
 
     asyncio.run(main())

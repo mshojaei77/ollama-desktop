@@ -26,7 +26,10 @@ interface PendingImage {
 
 const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element => {
   const [input, setInput] = useState('')
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
   const sessionId = useChatStore((state) => state.sessionId)
+  const addMessage = useChatStore((state) => state.addMessage)
+  const updateMessage = useChatStore((state) => state.updateMessage)
   const selectedModel = useChatStore((state) => state.selectedModel)
   const setSelectedModel = useChatStore((state) => state.setSelectedModel)
   const { data: modelsResponse, isLoading: isLoadingModels } = useModels(apiConnected === true)
@@ -52,29 +55,42 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
     }
   }
 
-  const sendMessage = (): void => {
-    // Can send message even if only an image is pending and input is empty
-    if ((!input.trim() && !pendingImage) || !sessionId) return
+  const sendMessage = async (): Promise<void> => {
+    if ((!input.trim() && !pendingImageFile) || !sessionId) return
 
-    // Input is cleared in the onSuccess callback of the mutation
-    // setInput('')
-
-    sendMessageMutation({
-      message: input, // Send current text input
-      session_id: sessionId
-      // The backend implicitly sends the pending image associated with the session
-    }, {
-      onSuccess: () => {
-        // Clear pending image and input after message is successfully sent
+    // If an image is attached, call the vision endpoint directly
+    if (pendingImageFile) {
+      const userId = Date.now().toString()
+      addMessage({ id: userId, role: 'user', content: input, timestamp: new Date() })
+      const assistId = (Date.now() + 1).toString()
+      addMessage({ id: assistId, role: 'assistant', content: '', timestamp: new Date() })
+      const formData = new FormData()
+      formData.append('session_id', sessionId)
+      formData.append('message', input)
+      formData.append('images', pendingImageFile)
+      try {
+        const resp = await fetch('http://localhost:8000/chat/vision', { method: 'POST', body: formData })
+        const json = await resp.json()
+        const content = json.response || ''
+        updateMessage(assistId, () => content)
+      } catch (e) {
+        updateMessage(assistId, (prev) => prev + `\n\nError: ${e}`)
+      } finally {
         setPendingImage(null)
-        setInput('') 
-        console.log("Message sent successfully, cleared pending image and input.")
-      },
-      onError: (error) => {
-        // Handle error
-        toast.error(`Failed to send message: ${error.message}`)
+        setPendingImageFile(null)
+        setInput('')
       }
-    })
+      return
+    }
+
+    // Fallback to text chat
+    sendMessageMutation(
+      { message: input, session_id: sessionId },
+      {
+        onSuccess: () => { setPendingImage(null); setInput('') },
+        onError: (error) => toast.error(`Failed to send message: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    )
   }
 
   const handleAttachmentClick = () => {
@@ -112,16 +128,24 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
     }
 
     try {
+      // If it's an image, store locally and skip upload API
+      if (ALLOWED_IMAGE_TYPES.includes(extension)) {
+        const id = Date.now().toString()
+        setPendingImage({ name: file.name, id })
+        setPendingImageFile(file)
+        toast.success(`Image "${file.name}" attached. Add a prompt and send.`)
+        return
+      }
+
       setIsUploading(true)
-      
+      // Upload context files (txt/md/pdf)
       const formData = new FormData()
       formData.append('file', file)
-
       const response = await fetch(`http://localhost:8000/sessions/${sessionId}/upload_file`, {
         method: 'POST',
-        body: formData
+        body: formData,
       })
-
+      
       const result = await response.json()
 
       if (!response.ok) {
@@ -167,6 +191,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
   // Remove pending image
   const removePendingImage = () => {
     setPendingImage(null)
+    setPendingImageFile(null)
     toast('Attached image removed')
     // Backend automatically clears image on next send or session cleanup,
     // so no specific backend call needed here just for removing the indicator.
@@ -222,7 +247,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={pendingImage ? "Add a prompt for the image..." : "Ask anything"}
+            placeholder={pendingImageFile ? "Add a prompt for the image..." : "Ask anything"}
             disabled={isSending}
             className="border-none focus:border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent w-full text-sm px-0 placeholder-[hsl(var(--muted-foreground))]"
           />
@@ -273,9 +298,9 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
             {/* Image Upload Button */}
             <button
               onClick={handleAttachmentClick}
-              disabled={isUploading || !!pendingImage || !sessionId || !apiConnected} // Disable if uploading or image pending
+              disabled={isUploading || !!pendingImageFile || !sessionId || !apiConnected}
               className="p-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] disabled:opacity-50"
-              title={pendingImage ? "Image already attached" : `Upload an image (${ALLOWED_IMAGE_TYPES.join(', ')})`}
+              title={pendingImageFile ? "Image already attached" : `Upload an image (${ALLOWED_IMAGE_TYPES.join(', ')})`}
             >
               {isUploading ? (
                  <Loader2 size={18} className="animate-spin" />
@@ -286,7 +311,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
 
             <button
               onClick={sendMessage}
-              disabled={isSending || (!input.trim() && !pendingImage) || !sessionId} // Allow sending if image is pending
+              disabled={isSending || (!input.trim() && !pendingImageFile) || !sessionId}
               className="p-1.5 text-blue-600 hover:text-blue-700 disabled:opacity-50"
             >
               <svg

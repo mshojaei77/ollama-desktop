@@ -14,16 +14,16 @@ import shutil
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
-import db  # Import our new database module
-from config_io import read_ollama_config, write_ollama_config
-from agents.routes import router as agents_router  # Import the agents router
-from agents.registry import agent_registry  # Import the agent registry
+from api.ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
+from api import db  # Import our new database module
+from api.config_io import read_ollama_config, write_ollama_config
+from api.agents.routes import router as agents_router  # Import the agents router
+from api.agents.registry import agent_registry  # Import the agent registry
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -1115,6 +1115,47 @@ async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
 
     # The temporary directory and its contents (temp_file_path) are automatically removed here
     # when the 'with' block exits.
+
+# Add Vision Chat endpoint
+@app.post("/chat/vision", response_model=ChatResponse, tags=["Chat"])
+async def chat_vision(
+    session_id: str = Form(...),
+    message: str = Form(...),
+    images: List[UploadFile] = File(...)
+):
+    """
+    Chat with image(s) using the vision model.
+    - Requires a valid session_id from a previous /chat/initialize call
+    - Accepts multiple images.
+    """
+    # Retrieve chatbot instance
+    if session_id in active_chatbots:
+        chatbot = active_chatbots[session_id]
+    elif session_id in active_clients:
+        client = active_clients[session_id]
+        if hasattr(client, 'chatbot') and isinstance(client.chatbot, OllamaChatbot):
+            chatbot = client.chatbot
+        else:
+            raise HTTPException(status_code=400, detail=f"Session {session_id} is an MCP client without a compatible chatbot instance.")
+    else:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    # Save user message and update activity
+    await db.add_chat_message(session_id, "user", message + f" [images: {[file.filename for file in images]}]")
+    await db.update_session_activity(session_id)
+    # Save uploaded images to a temporary directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_image_paths = []
+        for file in images:
+            temp_path = Path(temp_dir) / file.filename
+            with open(temp_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            temp_image_paths.append(str(temp_path))
+        # Call the vision chat method
+        response_content = await chatbot.chat_with_image(message, temp_image_paths)
+    # Save assistant response
+    await db.add_chat_message(session_id, "assistant", response_content)
+    await db.update_session_activity(session_id)
+    return ChatResponse(response=response_content, session_id=session_id)
 
 
 # ----- Programmatic API Examples -----
