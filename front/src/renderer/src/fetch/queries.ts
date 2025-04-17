@@ -32,7 +32,18 @@ export const queryClient = new QueryClient({
 const fetchModels = async (): Promise<string[]> => {
   try {
     const { data } = await apiClient.get<ModelsResponse>('/models')
-    return data.models
+    // Normalize models array to list of model names
+    const rawModels = data.models as unknown[]
+    return rawModels.map((m) => {
+      if (typeof m === 'string') {
+        return m
+      }
+      if (m && typeof m === 'object' && 'name' in (m as any)) {
+        return (m as any).name
+      }
+      // Fallback: stringify the entry
+      return String(m)
+    })
   } catch (error) {
     console.error('Error fetching models:', error)
     throw new Error('Failed to fetch models. Is the API server running?')

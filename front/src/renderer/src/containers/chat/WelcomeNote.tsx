@@ -5,6 +5,7 @@ import { useChatStore } from '@renderer/store/chatStore'
 import ollamaLogo from '../../assets/ollama.png'
 import { useNavigate } from 'react-router-dom'
 import { Routes } from '@renderer/lib/routes'
+import { useEffect } from 'react'
 
 const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element => {
   const selectedModel = useChatStore((state) => state.selectedModel)
@@ -15,9 +16,25 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
     data: models = [],
     isLoading: isLoadingModels,
     error: modelsError
-  } = useModels(apiConnected === true)
+  } = useModels(apiConnected !== false)
 
   const { mutate: initializeChat, isPending: isInitializing } = useInitializeChat()
+
+  // Automatically select the first model once models load
+  useEffect(() => {
+    if (!isLoadingModels && models.length > 0 && !selectedModel) {
+      console.log("Models loaded, selecting first model by default:", models[0]);
+      setSelectedModel(models[0]);
+    }
+    if (modelsError) {
+      console.error("Error loading models, clearing selection.");
+      setSelectedModel('');
+    }
+    if (!isLoadingModels && models.length === 0) {
+      console.warn("No models available, clearing selection.");
+      setSelectedModel('');
+    }
+  }, [models, isLoadingModels, modelsError, selectedModel, setSelectedModel]);
 
   const handleInitializeChat = (): void => {
     initializeChat(
@@ -92,7 +109,7 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
               className="w-full py-5 text-base font-medium rounded-xl "
               onClick={handleInitializeChat}
               disabled={
-                isInitializing || isLoadingModels || models.length === 0 || apiConnected !== true
+                isInitializing || isLoadingModels || models.length === 0 || !selectedModel || apiConnected !== true
               }
             >
               {isInitializing ? (
