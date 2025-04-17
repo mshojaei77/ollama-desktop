@@ -5,6 +5,7 @@ import { useChatStore } from '../store/chatStore'
 import WelcomeNote from './chat/WelcomeNote'
 import MessageContainer from './chat/MessageContainer'
 import InputSection from './chat/InputSection'
+import ChatHeader from './chat/ChatHeader'
 import { checkApiConnection } from '@renderer/fetch/queries'
 
 export default function Chat(): JSX.Element {
@@ -110,8 +111,8 @@ export default function Chat(): JSX.Element {
         <WelcomeNote apiConnected={apiConnected ?? false} />
       ) : (
         <>
+          <ChatHeader />
           <MessageContainer />
-
           <InputSection apiConnected={apiConnected ?? false} />
         </>
       )}

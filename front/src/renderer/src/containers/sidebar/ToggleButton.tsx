@@ -13,7 +13,7 @@ const ToggleButton = ({
   return (
     <button
       onClick={toggleSidebar}
-      className={`absolute ${isCollapsed ? '-right-12' : '-right-4'} top-4 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-1 shadow-md z-10`}
+      className={`absolute ${isCollapsed ? 'left-4' : '-right-4'} top-14 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-xl p-1 shadow-md z-20 transition-all duration-300 ease-in-out`}
       aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
     >
       {isCollapsed ? (

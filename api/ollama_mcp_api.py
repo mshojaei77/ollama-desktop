@@ -773,6 +773,39 @@ async def get_models():
         # If fetching fails, raise error. Consider returning stale cache if critical.
         raise HTTPException(status_code=500, detail=f"Error getting models from Ollama: {str(e)}")
 
+@app.get("/models/{model_name:path}/info", tags=["Models"])
+async def get_specific_model_info(model_name: str):
+    """
+    Get curated information about a specific Ollama model.
+
+    Uses the cleaned-up function to return specific fields like family,
+    parameter size, quantization level, languages, etc.
+
+    Args:
+        model_name: The name of the model (e.g., 'llama3.2')
+
+    Returns:
+        A dictionary containing the curated model information.
+        Returns 404 if the model is not found.
+    """
+    try:
+        app_logger.info(f"Getting curated info for model: {model_name}")
+        model_info = await OllamaMCPPackage.get_model_info(model_name)
+
+        if not model_info:
+            # The underlying function returns {} if model not found or on error
+            app_logger.warning(f"Model info not found for: {model_name}")
+            raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found or error retrieving info.")
+
+        return model_info
+
+    except HTTPException as http_exc:
+        # Re-raise HTTPExceptions (like 404) directly
+        raise http_exc
+    except Exception as e:
+        app_logger.error(f"Error getting specific model info for '{model_name}': {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error retrieving info for model '{model_name}'")
+
 @app.get("/chats", response_model=AvailableChatsResponse, tags=["Sessions"])
 async def get_chats(
     include_inactive: bool = False,

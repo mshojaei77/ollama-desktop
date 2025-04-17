@@ -43,8 +43,16 @@ export interface SendMessageResponse {
   response: string
 }
 
+export interface ModelInfo {
+  name: string
+  // Add other potential fields from Ollama API response if needed later
+  // size?: number;
+  // modified_at?: string;
+  // digest?: string;
+}
+
 export interface ModelsResponse {
-  models: string[]
+  models: ModelInfo[]
 }
 
 export interface ChatHistoryResponse {
@@ -102,4 +110,22 @@ export interface NewServerForm {
   type: string
   args: string
   serverUrl: string
+}
+
+// Interface for detailed model information
+export interface ModelDetails {
+  family?: string
+  parameter_size?: string
+  quantization_level?: string
+  model_name?: string // This seems redundant if we query by name, but included based on API output
+  languages_supported?: string[]
+  parameter_count?: number
+  size_label?: string
+  tags?: string[]
+  type?: string
+  context_length?: number
+  embedding_length?: number
+  vocab_size?: number
+  // Add any other fields that might be returned
+  [key: string]: unknown // Allow for other potential fields
 }

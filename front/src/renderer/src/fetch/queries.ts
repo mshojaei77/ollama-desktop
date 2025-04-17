@@ -14,7 +14,9 @@ import {
   ModelsResponse,
   ChatHistoryResponse,
   AvailableChatsResponse,
-  MCPServersResponse
+  MCPServersResponse,
+  ModelInfo,
+  ModelDetails
 } from './types'
 import { useChatStore } from '../store/chatStore'
 
@@ -29,21 +31,23 @@ export const queryClient = new QueryClient({
 })
 
 // API functions
-const fetchModels = async (): Promise<string[]> => {
+const fetchModels = async (): Promise<ModelsResponse> => {
   try {
     const { data } = await apiClient.get<ModelsResponse>('/models')
-    // Normalize models array to list of model names
-    const rawModels = data.models as unknown[]
-    return rawModels.map((m) => {
-      if (typeof m === 'string') {
-        return m
+    // No need to normalize anymore, just return the data
+    // Ensure the response conforms to the expected structure
+    if (!data || !Array.isArray(data.models)) {
+      console.error('Invalid models response format:', data)
+      throw new Error('Invalid response format received from API.')
+    }
+    // Optionally, validate each model object has a name
+    data.models.forEach((model, index) => {
+      if (!model || typeof model.name !== 'string') {
+        console.warn(`Model at index ${index} has invalid format:`, model);
+        // Depending on strictness, you might want to filter these out or throw an error
       }
-      if (m && typeof m === 'object' && 'name' in (m as any)) {
-        return (m as any).name
-      }
-      // Fallback: stringify the entry
-      return String(m)
-    })
+    });
+    return data
   } catch (error) {
     console.error('Error fetching models:', error)
     throw new Error('Failed to fetch models. Is the API server running?')
@@ -285,13 +289,11 @@ export const checkApiConnection = async (): Promise<boolean> => {
 }
 
 // React Query hooks
-export const useModels = (enabled: boolean = true): UseQueryResult<string[], Error> => {
-  return useQuery({
+export const useModels = (enabled: boolean = true): UseQueryResult<ModelsResponse, Error> => {
+  return useQuery<ModelsResponse, Error>({
     queryKey: ['models'],
     queryFn: fetchModels,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    retry: 2,
-    enabled
+    enabled: enabled
   })
 }
 
@@ -444,5 +446,33 @@ export const useMCPServers = (): UseQueryResult<MCPServersResponse, Error> => {
   return useQuery({
     queryKey: ['mcpServers'],
     queryFn: fetchMCPServers
+  })
+}
+
+const fetchModelInfo = async (modelName: string): Promise<ModelDetails> => {
+  // Make sure modelName is properly encoded for the URL
+  const encodedModelName = encodeURIComponent(modelName);
+  try {
+    const { data } = await apiClient.get<ModelDetails>(`/models/${encodedModelName}/info`)
+    return data
+  } catch (error) {
+    console.error(`Error fetching model info for ${modelName}:`, error)
+    throw new Error(`Failed to fetch info for model ${modelName}. Please try again.`)
+  }
+}
+
+// Hook to fetch detailed info for a specific model
+export const useModelInfo = (modelName: string | null): UseQueryResult<ModelDetails, Error> => {
+  return useQuery<ModelDetails, Error>({
+    queryKey: ['modelInfo', modelName],
+    queryFn: () => {
+      if (!modelName) {
+        // Should not happen if enabled is false, but good practice
+        throw new Error('Model name is required to fetch info.')
+      }
+      return fetchModelInfo(modelName)
+    },
+    enabled: !!modelName, // Only run the query if modelName is provided
+    staleTime: 5 * 60 * 1000 // Cache for 5 minutes
   })
 }

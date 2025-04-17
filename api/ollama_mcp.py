@@ -1000,6 +1000,75 @@ class OllamaMCPPackage:
             return []
 
     @staticmethod
+    async def get_model_info(model_name: str, base_url: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get a curated, specific set of information about an Ollama model.
+
+        Args:
+            model_name: The name of the model to get information for.
+            base_url: Optional base URL for the Ollama API.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing only the specified model details,
+                           or an empty dictionary if an error occurs or data is missing.
+        """
+        try:
+            import ollama
+            # Use AsyncClient for direct async call
+            client = ollama.AsyncClient(host=base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+            # Directly await the async show method
+            full_info = await client.show(model_name)
+
+            details = full_info.get('details', {})
+            modelinfo = full_info.get('modelinfo', {})
+
+            # Handle potential ModelDetails object
+            if not isinstance(details, dict) and hasattr(details, '__dict__'):
+                details_dict = vars(details)
+            elif isinstance(details, dict):
+                details_dict = details
+            else:
+                details_dict = {}
+
+            # Extract and map specific fields
+            curated_info = {
+                "family": details_dict.get('family'),
+                "parameter_size": details_dict.get('parameter_size'),
+                "quantization_level": details_dict.get('quantization_level'),
+                "model_name": modelinfo.get('general.basename'),
+                "languages_supported": modelinfo.get('general.languages'),
+                "parameter_count": modelinfo.get('general.parameter_count'),
+                "size_label": modelinfo.get('general.size_label'),
+                "tags": modelinfo.get('general.tags'),
+                "type": modelinfo.get('general.type'),
+                "context_length": modelinfo.get('llama.context_length'),
+                "embedding_length": modelinfo.get('llama.embedding_length'),
+                "vocab_size": modelinfo.get('llama.vocab_size'),
+            }
+
+            # Remove keys where the value is None (if the field was missing in the source)
+            cleaned_info = {k: v for k, v in curated_info.items() if v is not None}
+
+            return cleaned_info
+
+        except ImportError:
+            app_logger.error("The 'ollama' library is required but not installed. Please install it using 'pip install ollama'.")
+            return {}
+        except Exception as e:
+            # Catch potential ResponseError from the ollama library
+            if "ollama.ResponseError" in str(type(e)) and "not found" in str(e).lower():
+                 app_logger.warning(f"Model '{model_name}' not found via API.")
+                 # Return empty dict which the API endpoint will turn into 404
+            else:
+                 app_logger.error(f"Error getting model info for '{model_name}': {str(e)}")
+            # Propagate specific errors or return empty dict for general ones
+            # Check if it's the specific ResponseError for 'not found'
+            if "ollama.ResponseError" in str(type(e)) and "not found" in str(e).lower():
+                return {}
+            # Re-raise other exceptions to be caught by the API endpoint handler
+            raise e
+
+    @staticmethod
     async def load_mcp_config() -> Dict[str, Any]:
         """
         Load MCP server configuration
@@ -1042,3 +1111,10 @@ class OllamaMCPPackage:
         except Exception as e:
             app_logger.error(f"Error getting MCP server config for '{server_name}': {str(e)}")
             return None
+
+if __name__ == "__main__":
+    async def main():
+        info = await OllamaMCPPackage.get_model_info("llama3.2")
+        print(info)
+
+    asyncio.run(main())

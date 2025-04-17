@@ -29,7 +29,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
   const sessionId = useChatStore((state) => state.sessionId)
   const selectedModel = useChatStore((state) => state.selectedModel)
   const setSelectedModel = useChatStore((state) => state.setSelectedModel)
-  const { data: models = [], isLoading: isLoadingModels } = useModels(apiConnected === true)
+  const { data: modelsResponse, isLoading: isLoadingModels } = useModels(apiConnected === true)
   const [toolsEnabled, setToolsEnabled] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -216,22 +216,22 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
           </div>
       )}
 
-      <div className="flex flex-col w-full bg-[hsl(var(--card))] rounded-2xl py-3 border border-[hsl(var(--border))] shadow-sm">
-        <div className="px-4">
+      <div className="flex flex-col w-full bg-[hsl(var(--card))] rounded-lg border">
+        <div className="px-4 pt-3">
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={pendingImage ? "Add a prompt for the image..." : "Ask anything"}
             disabled={isSending}
-            className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent w-full text-sm px-0 placeholder-[hsl(var(--muted-foreground))]"
+            className="border-none focus:border-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent w-full text-sm px-0 placeholder-[hsl(var(--muted-foreground))]"
           />
         </div>
         
-        <div className="flex items-center gap-2 mt-1">
-          <div className="pl-2">
+        <div className="flex items-center gap-2 mt-1 pb-3">
+          <div className="pl-4">
             <ModelsDropdown
-              models={models}
+              models={modelsResponse?.models || []}
               selectedModel={selectedModel}
               onChange={(value) => setSelectedModel(value)}
               isLoading={isLoadingModels}

@@ -1,4 +1,4 @@
-import { Plug, Settings, Bot } from 'lucide-react'
+import { Plug, Settings, Bot, Layers } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Routes } from '../../lib/routes'
 
@@ -20,6 +20,13 @@ const FooterSection = (): JSX.Element => {
       >
         <Bot className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
         <span className="text-sm text-[hsl(var(--foreground))]">Agents</span>
+      </div>
+      <div
+        className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]"
+        onClick={() => navigate(Routes.MODELS)}
+      >
+        <Layers className="h-4 w-4 mr-2 text-[hsl(var(--muted-foreground))]" />
+        <span className="text-sm text-[hsl(var(--foreground))]">Models</span>
       </div>
       <div 
         className="flex items-center p-2 rounded-lg cursor-pointer hover:bg-[hsl(var(--secondary))]"

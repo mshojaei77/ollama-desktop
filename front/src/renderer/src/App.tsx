@@ -4,6 +4,7 @@ import Sidebar from './containers/Sidebar'
 import MCPServers from './containers/MCPServers'
 import Settings from './containers/Settings'
 import Agents from './containers/Agents'
+import Models from './Models'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './fetch/queries'
 import { HashRouter, Routes, Route } from 'react-router-dom'
@@ -46,7 +47,7 @@ function App(): JSX.Element {
   return (
     <QueryClientProvider client={queryClient}>
       <HashRouter>
-        <div className="flex h-screen overflow-hidden">
+        <div className="flex h-screen">
           <Sidebar />
           <div className="flex-1">
             <Routes>
@@ -54,6 +55,7 @@ function App(): JSX.Element {
               <Route path={AppRoutes.MCP_SERVERS} element={<MCPServers />} />
               <Route path={AppRoutes.SETTINGS} element={<Settings />} />
               <Route path={AppRoutes.AGENTS} element={<Agents />} />
+              <Route path={AppRoutes.MODELS} element={<Models />} />
             </Routes>
           </div>
         </div>

@@ -13,18 +13,20 @@ const WelcomeNote = ({ apiConnected }: { apiConnected: boolean }): JSX.Element =
   const navigate = useNavigate()
 
   const {
-    data: models = [],
+    data: modelsResponse,
     isLoading: isLoadingModels,
     error: modelsError
   } = useModels(apiConnected !== false)
+
+  const models = modelsResponse?.models || []
 
   const { mutate: initializeChat, isPending: isInitializing } = useInitializeChat()
 
   // Automatically select the first model once models load
   useEffect(() => {
     if (!isLoadingModels && models.length > 0 && !selectedModel) {
-      console.log("Models loaded, selecting first model by default:", models[0]);
-      setSelectedModel(models[0]);
+      console.log("Models loaded, selecting first model by default:", models[0].name);
+      setSelectedModel(models[0].name);
     }
     if (modelsError) {
       console.error("Error loading models, clearing selection.");
