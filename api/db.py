@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
     role TEXT NOT NULL,  -- 'user' or 'assistant'
     message TEXT NOT NULL,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    tools TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
 
@@ -345,13 +346,13 @@ async def delete_session_permanently(session_id: str) -> None:
 
 # ----- Chat history operations -----
 
-async def add_chat_message(session_id: str, role: str, message: str) -> None:
+async def add_chat_message(session_id: str, role: str, message: str, tools: Optional[List[Dict]] = None) -> None:
     """Add a message to the chat history"""
     async with async_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO chat_history (session_id, role, message) VALUES (?, ?, ?)",
-            (session_id, role, message)
+            "INSERT INTO chat_history (session_id, role, message, tools) VALUES (?, ?, ?, ?)",
+            (session_id, role, message, json.dumps(tools))
         )
         conn.commit()
 
@@ -360,7 +361,7 @@ async def get_chat_history(session_id: str, limit: int = 100) -> List[Dict]:
     async with async_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT role, message, timestamp FROM chat_history "
+            "SELECT role, message, timestamp, tools FROM chat_history "
             "WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?",
             (session_id, limit)
         )
@@ -491,6 +492,10 @@ def migrate_database():
         # Add last_used column to models table if it doesn't exist
         if add_column_if_not_exists(conn, "models", "last_used", "TIMESTAMP"):
             print("Migration: Added 'last_used' column to models table")
+        
+        # Add tools column to chat_history table if it doesn't exist
+        if add_column_if_not_exists(conn, "chat_history", "tools", "TEXT"):
+            print("Migration: Added 'tools' column to chat_history table")
         
         # Add any future migrations here
         

@@ -133,3 +133,21 @@ export interface ModelDetails {
   // Add any other fields that might be returned
   [key: string]: unknown // Allow for other potential fields
 }
+export interface ChatResponse {
+  type: 'token' | 'tool'
+  response: TokenResponse | ToolResponse
+  session_id: string
+}
+
+type TokenResponse = {
+  type: 'token'
+  response: string
+  session_id: string
+}
+
+type ToolResponse = {
+  params: any
+  tool_name: string
+  response: string
+  session_id: string
+}

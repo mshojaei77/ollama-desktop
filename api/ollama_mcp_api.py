@@ -493,22 +493,39 @@ async def mcp_query_stream(request: ChatRequest):
     async def generate_stream() -> AsyncGenerator[str, None]:
         """Generate streaming response from MCPClient"""
         try:
+            print('! in generate_stream')
             client = active_clients[request.session_id]
+            # queue = asyncio.Queue()
             
             # Save user message to history
             await db.add_chat_message(request.session_id, "user", request.message)
             
             # Process query with MCP tools and stream the response
             full_response = []
+            tools = []
             
             # Use a custom streaming method (to be added to MCPClient)
             async for chunk in client.process_query_stream(request.message):
-                if chunk is None:  # Completion signal
+                if chunk is None:
                     break
+                try:
+                    chunk_data = json.loads(chunk.replace('data: ', ''))
+                except json.JSONDecodeError as e:
+                    app_logger.error(f"JSON decode error: {str(e)}. Chunk: {chunk}")
+                    continue  # Skip this chunk and continue with the next one
                 
-                full_response.append(chunk)
-                yield f"data: {json.dumps({'text': chunk})}\n\n"
+                if chunk_data['type'] == 'token':
+                    if isinstance(chunk_data['response'], str):
+                        full_response.append(chunk_data['response'])
+                    else:
+                        app_logger.error(f"Unexpected type in full_response: {type(chunk_data['response'])}, value: {chunk_data['response']}")
+                        full_response.append(str(chunk_data['response']))
+                    yield chunk
+                elif chunk_data['type'] == 'tool':
+                    tools.append(chunk_data)
+                    yield chunk
             
+            print('! tools', tools)
             # Combine the full response for logging and history
             complete_response = ''.join(full_response)
             app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
@@ -517,7 +534,7 @@ async def mcp_query_stream(request: ChatRequest):
             await db.update_session_activity(request.session_id)
             
             # Save assistant response to history
-            await db.add_chat_message(request.session_id, "assistant", complete_response)
+            await db.add_chat_message(request.session_id, "assistant", complete_response, tools=tools)
             
             # Send completion signal
             yield f"data: {json.dumps({'done': True})}\n\n"

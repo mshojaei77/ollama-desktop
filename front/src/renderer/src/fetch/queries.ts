@@ -15,8 +15,8 @@ import {
   ChatHistoryResponse,
   AvailableChatsResponse,
   MCPServersResponse,
-  ModelInfo,
-  ModelDetails
+  ModelDetails,
+  ChatResponse
 } from './types'
 import { useChatStore } from '../store/chatStore'
 
@@ -87,7 +87,7 @@ const createFetchStream = (
   url: string,
   body: object,
   onChunk: (chunk: string) => void
-): Promise<string> => {
+): Promise<ChatResponse> => {
   return new Promise((resolve, reject) => {
     let fullResponse = ''
     let errorMessage = ''
@@ -128,28 +128,23 @@ const createFetchStream = (
 
               if (line.startsWith('data: ')) {
                 try {
-                  const jsonStr = line.slice(6).trim() // Remove 'data: ' prefix
+                  const jsonStr = line.replace('data: ', '')
                   console.log('Processing JSON data:', jsonStr)
 
                   if (!jsonStr) {
                     console.warn('Empty JSON string in data line')
                     continue
                   }
-
                   const data = JSON.parse(jsonStr)
                   console.log('Parsed response data:', data)
 
-                  if (data.text) {
-                    console.log('Received text chunk:', data.text)
-                    fullResponse += data.text
-                    onChunk(data.text)
-                    processedAny = true
-                  } else if (data.response) {
-                    // Some APIs might use 'response' instead of 'text'
-                    console.log('Received response chunk:', data.response)
+                  // console.log('data', data)
+
+                  if (data.type === 'token') {
                     fullResponse += data.response
                     onChunk(data.response)
-                    processedAny = true
+                  } else if (data.type === 'tool') {
+                    onChunk(data.response)
                   }
 
                   if (data.done) {

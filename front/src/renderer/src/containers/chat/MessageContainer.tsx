@@ -24,16 +24,20 @@ interface MessageContainerProps {
   onRefresh?: (id: string) => void
 }
 
-const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming, onRefresh }: MessageContainerProps = {}): JSX.Element => {
+const MessageContainer = ({
+  messages: propMessages,
+  isStreaming: propIsStreaming,
+  onRefresh
+}: MessageContainerProps = {}): JSX.Element => {
   const sessionId = useChatStore((state) => state.sessionId)
   const storeMessages = useChatStore((state) => state.messages)
   const messages = propMessages ?? storeMessages
   const setMessages = useChatStore((state) => state.setMessages)
   const clearMessages = useChatStore((state) => state.clearMessages)
   const selectedModel = useChatStore((state) => state.selectedModel)
-  
+
   const [isStreaming, setIsStreaming] = useState(false)
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const lastScrollHeightRef = useRef<number>(0)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -48,23 +52,27 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
     refetch: refetchHistory
   } = useChatHistory(sessionId)
 
-  const { mutate: sendMessageMutation, isPending: isSendingMessage, isError: isSendError } = useSendMessage()
+  const {
+    mutate: sendMessageMutation,
+    isPending: isSendingMessage,
+    isError: isSendError
+  } = useSendMessage()
 
   // Debug logging for messages
   useEffect(() => {
     console.log('Current messages:', messages)
-    
+
     // Debug specific message content
-    messages.forEach(message => {
+    messages.forEach((message) => {
       if (message.role === 'assistant') {
         console.log('Assistant message details:', {
           id: message.id,
           contentLength: message.content?.length || 0,
           content: message.content?.substring(0, 50) + (message.content?.length > 50 ? '...' : ''),
           contentExists: !!message.content
-        });
+        })
       }
-    });
+    })
   }, [messages])
 
   useEffect(() => {
@@ -100,30 +108,30 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
   // Smart scrolling behavior that respects user scrolling during streaming
   useEffect(() => {
     if (!messagesEndRef.current || !scrollContainerRef.current) return
-    
+
     const scrollContainer = scrollContainerRef.current
     const currentScrollHeight = scrollContainer.scrollHeight
-    const isUserScrolledUp = scrollContainer.scrollTop + scrollContainer.clientHeight < lastScrollHeightRef.current - 30
-    
+    const isUserScrolledUp =
+      scrollContainer.scrollTop + scrollContainer.clientHeight < lastScrollHeightRef.current - 30
+
     // Scroll to bottom in these cases:
     // 1. New message added (height changed significantly)
     // 2. Currently streaming and user hasn't scrolled up
-    const shouldScrollToBottom = 
-      currentScrollHeight !== lastScrollHeightRef.current || 
-      (isStreaming && !isUserScrolledUp)
-    
-    console.log('Scroll state:', { 
-      currentHeight: currentScrollHeight, 
-      lastHeight: lastScrollHeightRef.current, 
+    const shouldScrollToBottom =
+      currentScrollHeight !== lastScrollHeightRef.current || (isStreaming && !isUserScrolledUp)
+
+    console.log('Scroll state:', {
+      currentHeight: currentScrollHeight,
+      lastHeight: lastScrollHeightRef.current,
       isStreaming,
       isUserScrolledUp,
       shouldScrollToBottom
     })
-      
+
     if (shouldScrollToBottom) {
       messagesEndRef.current.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' })
     }
-    
+
     lastScrollHeightRef.current = currentScrollHeight
   }, [messages, isStreaming])
 
@@ -151,7 +159,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
     const updatedMessages = [...messages]
     updatedMessages.splice(messageIndex, 1)
     setMessages(updatedMessages as any)
-    
+
     // Send the message again to trigger regeneration
     sendMessageMutation({
       message: userMessage.content,
@@ -164,22 +172,22 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
   const handleRefresh = onRefresh ?? regenerateResponse
 
   return (
-    <div 
-      ref={scrollContainerRef} 
-      className="flex-1 p-4 overflow-y-auto px-20 hide-scrollbar"
-    >
+    <div ref={scrollContainerRef} className="flex-1 p-4 overflow-y-auto px-20 hide-scrollbar">
       {/* Loading/Error indicators only when uncontrolled */}
       {!isControlled && isLoadingHistory && (
         <div className="flex justify-center my-8">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-          <span className="ml-2 text-sm text-[hsl(var(--muted-foreground))]">Loading chat history...</span>
+          <span className="ml-2 text-sm text-[hsl(var(--muted-foreground))]">
+            Loading chat history...
+          </span>
         </div>
       )}
 
       {!isControlled && historyError && (
         <div className="mx-auto max-w-4xl my-4 p-3 border rounded-lg border-red-300 bg-[hsl(var(--card))] text-red-700">
           <p>
-            Error loading chat history: {historyError instanceof Error ? historyError.message : 'Unknown error'}
+            Error loading chat history:{' '}
+            {historyError instanceof Error ? historyError.message : 'Unknown error'}
           </p>
           <button
             onClick={() => refetchHistory()}
@@ -193,10 +201,10 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
       {/* Messages list */}
       <div className="max-w-4xl mx-auto space-y-6">
         {messages.map((message) => {
-          const isLastAssistantMessage = 
-            (message.role === 'assistant' || message.role === 'agent') && 
+          const isLastAssistantMessage =
+            (message.role === 'assistant' || message.role === 'agent') &&
             message.id === messages[messages.length - 1]?.id &&
-            (propIsStreaming !== undefined ? propIsStreaming : isStreaming);
+            (propIsStreaming !== undefined ? propIsStreaming : isStreaming)
 
           return (
             <div
@@ -208,12 +216,16 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-white dark:bg-white text-blue-600 dark:text-blue-600">
                     <img
                       // Use agent icon if role is agent, otherwise use selected model icon
-                      src={message.role === 'agent' ? getAgentIconPath(message.agentId || 'agent-placeholder') : getIconPath(selectedModel)}
+                      src={
+                        message.role === 'agent'
+                          ? getAgentIconPath(message.agentId || 'agent-placeholder')
+                          : getIconPath(selectedModel)
+                      }
                       alt="Icon"
                       className="w-6 h-6 rounded-full"
                       onError={(e) => {
                         // Fallback to default icon using a root-relative path
-                        e.currentTarget.src = '/assets/models/default.png';
+                        e.currentTarget.src = '/assets/models/default.png'
                       }}
                     />
                   </div>
@@ -221,7 +233,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
               )}
               <div className="flex flex-col max-w-[80%]">
                 <div
-                  className={`rounded-2xl p-3 ${ 
+                  className={`rounded-2xl p-3 ${
                     message.role === 'user'
                       ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
                       : 'bg-[hsl(var(--card))] border border-[hsl(var(--border))]'
@@ -278,7 +290,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
                           )
                         }}
                       >
-                        {message.content || ""}
+                        {message.content || ''}
                       </ReactMarkdown>
                     </div>
                   )}
@@ -287,16 +299,17 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
                   )}
                 </div>
                 {/* Regenerate Button (only for completed assistant or agent messages) */}
-                {(message.role === 'assistant' || message.role === 'agent') && !isLastAssistantMessage && (
-                  <MessageActions
-                    message={message}
-                    onCopy={copyToClipboard}
-                    onRefresh={handleRefresh}
-                  />
-                )}
+                {(message.role === 'assistant' || message.role === 'agent') &&
+                  !isLastAssistantMessage && (
+                    <MessageActions
+                      message={message}
+                      onCopy={copyToClipboard}
+                      onRefresh={handleRefresh}
+                    />
+                  )}
               </div>
             </div>
-          );
+          )
         })}
       </div>
       <div ref={messagesEndRef} />
