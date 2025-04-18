@@ -49,7 +49,7 @@ function App(): JSX.Element {
       <HashRouter>
         <div className="flex h-screen">
           <Sidebar />
-          <div className="flex-1">
+          <div className="flex-1 overflow-y-auto">
             <Routes>
               <Route path={AppRoutes.HOME} element={<Chat />} />
               <Route path={AppRoutes.MCP_SERVERS} element={<MCPServers />} />

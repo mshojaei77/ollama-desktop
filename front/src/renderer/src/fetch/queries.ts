@@ -32,6 +32,16 @@ export const queryClient = new QueryClient({
 
 // API functions
 const fetchModels = async (): Promise<ModelsResponse> => {
+  // Try to load models list from localStorage cache
+  const cachedModels = localStorage.getItem('modelsResponse');
+  if (cachedModels) {
+    try {
+      return JSON.parse(cachedModels) as ModelsResponse;
+    } catch (e) {
+      console.warn('Failed to parse cached modelsResponse, fetching from API', e);
+      localStorage.removeItem('modelsResponse');
+    }
+  }
   try {
     const { data } = await apiClient.get<ModelsResponse>('/models')
     // No need to normalize anymore, just return the data
@@ -47,6 +57,12 @@ const fetchModels = async (): Promise<ModelsResponse> => {
         // Depending on strictness, you might want to filter these out or throw an error
       }
     });
+    // Cache the fetched models list for future sessions
+    try {
+      localStorage.setItem('modelsResponse', JSON.stringify(data));
+    } catch (e) {
+      console.error('Failed to cache models response', e);
+    }
     return data
   } catch (error) {
     console.error('Error fetching models:', error)
@@ -289,11 +305,12 @@ export const checkApiConnection = async (): Promise<boolean> => {
 }
 
 // React Query hooks
-export const useModels = (enabled: boolean = true): UseQueryResult<ModelsResponse, Error> => {
+export const useModels = (enabled: boolean = true) => {
   return useQuery<ModelsResponse, Error>({
     queryKey: ['models'],
     queryFn: fetchModels,
-    enabled: enabled
+    enabled: enabled,
+    staleTime: Infinity
   })
 }
 
@@ -452,10 +469,32 @@ export const useMCPServers = (): UseQueryResult<MCPServersResponse, Error> => {
 }
 
 const fetchModelInfo = async (modelName: string): Promise<ModelDetails> => {
+  // Try to load model details from localStorage cache
+  const cachedInfosStr = localStorage.getItem('modelInfos');
+  if (cachedInfosStr) {
+    try {
+      const cachedInfos = JSON.parse(cachedInfosStr) as Record<string, ModelDetails>;
+      if (cachedInfos[modelName]) {
+        return cachedInfos[modelName];
+      }
+    } catch (e) {
+      console.warn('Failed to parse cached modelInfos', e);
+      localStorage.removeItem('modelInfos');
+    }
+  }
   // Make sure modelName is properly encoded for the URL
   const encodedModelName = encodeURIComponent(modelName);
   try {
     const { data } = await apiClient.get<ModelDetails>(`/models/${encodedModelName}/info`)
+    // Cache fetched model details permanently in localStorage
+    try {
+      const infosStr = localStorage.getItem('modelInfos');
+      const infos = infosStr ? JSON.parse(infosStr) as Record<string, ModelDetails> : {};
+      infos[modelName] = data;
+      localStorage.setItem('modelInfos', JSON.stringify(infos));
+    } catch (e) {
+      console.error('Failed to cache model info', e);
+    }
     return data
   } catch (error) {
     console.error(`Error fetching model info for ${modelName}:`, error)
@@ -464,17 +503,16 @@ const fetchModelInfo = async (modelName: string): Promise<ModelDetails> => {
 }
 
 // Hook to fetch detailed info for a specific model
-export const useModelInfo = (modelName: string | null): UseQueryResult<ModelDetails, Error> => {
+export const useModelInfo = (modelName: string | null) => {
   return useQuery<ModelDetails, Error>({
     queryKey: ['modelInfo', modelName],
     queryFn: () => {
       if (!modelName) {
-        // Should not happen if enabled is false, but good practice
         throw new Error('Model name is required to fetch info.')
       }
       return fetchModelInfo(modelName)
     },
     enabled: !!modelName, // Only run the query if modelName is provided
-    staleTime: 5 * 60 * 1000 // Cache for 5 minutes
+    staleTime: Infinity, // Cache indefinitely
   })
 }

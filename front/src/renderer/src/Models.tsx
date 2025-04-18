@@ -12,36 +12,64 @@ import {
   DialogClose
 } from './components/ui/dialog'
 import { Button } from './components/ui/button'
-import { MessageSquare, Image, Hash } from 'lucide-react'
+import {
+  MessageSquare,
+  Image,
+  Hash,
+  ArrowUpDown,
+  Search,
+  Database,
+  Info,
+  ExternalLink
+} from 'lucide-react'
 import ModelDetailsView from './components/ModelDetailsView'
 import apiClient from './fetch/api-client'
 import { ModelDetails } from './fetch/types'
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from './components/ui/select'
 import { getIconPath, getModelDisplayName } from './utils'
 import embedIcon from './assets/models/embed.png'
+import AddModel from './components/models/AddModel'
 
 const Models: React.FC = () => {
   const { data: modelsResponse, isLoading: isLoadingModels, error: modelsError, isError: isModelsError } = useModels()
   const [selectedModelName, setSelectedModelName] = useState<string | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  type SortOption = 'default' | 'nameAsc' | 'nameDesc' | 'paramAsc' | 'paramDesc' | 'familyAsc' | 'familyDesc'
-  const [sortOption, setSortOption] = useState<SortOption>('default')
-  const [modelInfos, setModelInfos] = useState<Record<string, ModelDetails>>({})
+  type SortOption = 'default' | 'nameAsc' | 'nameDesc' | 'paramAsc' | 'paramDesc'
+  const [textSortOption, setTextSortOption] = useState<SortOption>('default')
+  const [visionSortOption, setVisionSortOption] = useState<SortOption>('default')
+  const [embedSortOption, setEmbedSortOption] = useState<SortOption>('default')
+  const [modelInfos, setModelInfos] = useState<Record<string, ModelDetails>>(() => {
+    const cached = localStorage.getItem('modelInfos')
+    return cached ? JSON.parse(cached) : {}
+  })
 
   // Fetch model details once per model for caching
   useEffect(() => {
-    if (modelsResponse?.models) {
-      modelsResponse.models.forEach(({ name }) => {
+    const fetchInfos = async () => {
+      if (!modelsResponse?.models) return
+      for (const { name } of modelsResponse.models) {
         if (!modelInfos[name]) {
-          apiClient.get<ModelDetails>(`/models/${encodeURIComponent(name)}/info`)
-            .then(({ data }) => {
-              setModelInfos(prev => ({ ...prev, [name]: data }))
+          try {
+            const { data } = await apiClient.get<ModelDetails>(
+              `/models/${encodeURIComponent(name)}/info`
+            )
+            setModelInfos(prev => {
+              const updated = { ...prev, [name]: data }
+              try {
+                localStorage.setItem('modelInfos', JSON.stringify(updated))
+              } catch (e) {
+                console.error('Failed to cache model infos', e)
+              }
+              return updated
             })
-            .catch(console.error)
+          } catch (error) {
+            console.error('Failed to fetch model info for', name, error)
+          }
         }
-      })
+      }
     }
-  }, [modelsResponse, modelInfos])
+    fetchInfos()
+  }, [modelsResponse])
 
   // Utility to parse sizes like '7B', '2.7B'
   const parseParamSize = (size?: string): number => {
@@ -85,44 +113,38 @@ const Models: React.FC = () => {
   const sortedTextAsc = [...textGenerationModels].sort((a, b) => a.name.localeCompare(b.name))
   const sortedTextDesc = [...textGenerationModels].sort((a, b) => b.name.localeCompare(a.name))
   const displayedTextGenerationModels = useMemo(() => {
-    switch (sortOption) {
+    switch (textSortOption) {
       case 'nameAsc': return [...textGenerationModels].sort((a, b) => a.name.localeCompare(b.name))
       case 'nameDesc': return [...textGenerationModels].sort((a, b) => b.name.localeCompare(a.name))
       case 'paramAsc': return [...textGenerationModels].sort((a, b) => parseParamSize(modelInfos[a.name]?.parameter_size) - parseParamSize(modelInfos[b.name]?.parameter_size))
       case 'paramDesc': return [...textGenerationModels].sort((a, b) => parseParamSize(modelInfos[b.name]?.parameter_size) - parseParamSize(modelInfos[a.name]?.parameter_size))
-      case 'familyAsc': return [...textGenerationModels].sort((a, b) => (modelInfos[a.name]?.family || '').localeCompare(modelInfos[b.name]?.family || ''))
-      case 'familyDesc': return [...textGenerationModels].sort((a, b) => (modelInfos[b.name]?.family || '').localeCompare(modelInfos[a.name]?.family || ''))
       default: return textGenerationModels
     }
-  }, [textGenerationModels, sortOption, modelInfos])
+  }, [textGenerationModels, textSortOption, modelInfos])
 
   const sortedVisionAsc = [...multimodalModels].sort((a, b) => a.name.localeCompare(b.name))
   const sortedVisionDesc = [...multimodalModels].sort((a, b) => b.name.localeCompare(a.name))
   const displayedVisionModels = useMemo(() => {
-    switch (sortOption) {
+    switch (visionSortOption) {
       case 'nameAsc': return [...multimodalModels].sort((a, b) => a.name.localeCompare(b.name))
       case 'nameDesc': return [...multimodalModels].sort((a, b) => b.name.localeCompare(a.name))
       case 'paramAsc': return [...multimodalModels].sort((a, b) => parseParamSize(modelInfos[a.name]?.parameter_size) - parseParamSize(modelInfos[b.name]?.parameter_size))
       case 'paramDesc': return [...multimodalModels].sort((a, b) => parseParamSize(modelInfos[b.name]?.parameter_size) - parseParamSize(modelInfos[a.name]?.parameter_size))
-      case 'familyAsc': return [...multimodalModels].sort((a, b) => (modelInfos[a.name]?.family || '').localeCompare(modelInfos[b.name]?.family || ''))
-      case 'familyDesc': return [...multimodalModels].sort((a, b) => (modelInfos[b.name]?.family || '').localeCompare(modelInfos[a.name]?.family || ''))
       default: return multimodalModels
     }
-  }, [multimodalModels, sortOption, modelInfos])
+  }, [multimodalModels, visionSortOption, modelInfos])
 
   const sortedEmbedAsc = [...embeddingModels].sort((a, b) => a.name.localeCompare(b.name))
   const sortedEmbedDesc = [...embeddingModels].sort((a, b) => b.name.localeCompare(a.name))
   const displayedEmbeddingModels = useMemo(() => {
-    switch (sortOption) {
+    switch (embedSortOption) {
       case 'nameAsc': return [...embeddingModels].sort((a, b) => a.name.localeCompare(b.name))
       case 'nameDesc': return [...embeddingModels].sort((a, b) => b.name.localeCompare(a.name))
       case 'paramAsc': return [...embeddingModels].sort((a, b) => parseParamSize(modelInfos[a.name]?.parameter_size) - parseParamSize(modelInfos[b.name]?.parameter_size))
       case 'paramDesc': return [...embeddingModels].sort((a, b) => parseParamSize(modelInfos[b.name]?.parameter_size) - parseParamSize(modelInfos[a.name]?.parameter_size))
-      case 'familyAsc': return [...embeddingModels].sort((a, b) => (modelInfos[a.name]?.family || '').localeCompare(modelInfos[b.name]?.family || ''))
-      case 'familyDesc': return [...embeddingModels].sort((a, b) => (modelInfos[b.name]?.family || '').localeCompare(modelInfos[a.name]?.family || ''))
       default: return embeddingModels
     }
-  }, [embeddingModels, sortOption, modelInfos])
+  }, [embeddingModels, embedSortOption, modelInfos])
 
   return (
     <div className="container mx-auto px-6 py-8 bg-[hsl(var(--background))] text-[hsl(var(--foreground))] min-h-screen">
@@ -132,9 +154,11 @@ const Models: React.FC = () => {
           <h1 className="text-3xl font-bold">Model Library</h1>
           <p className="text-base text-[hsl(var(--muted-foreground))] mt-1">Browse and manage your Ollama models</p>
         </div>
-        <div className="flex space-x-2 mt-4 sm:mt-0">
-          <Button variant="outline" onClick={() => window.open('https://ollama.com/search', '_blank')}>Browse Models</Button>
-          <Button>Add Model</Button>
+        <div className="flex items-center space-x-2 mt-4 sm:mt-0">
+          <Button variant="outline" onClick={() => window.open('https://ollama.com/search', '_blank')}>
+            <ExternalLink className="w-4 h-4 mr-2" />Browse Models
+          </Button>
+          <AddModel />
         </div>
       </div>
       <div className="space-y-12">
@@ -151,36 +175,40 @@ const Models: React.FC = () => {
         )}
         {!isLoadingModels && !isModelsError && (
           <>
-            {/* Sort Models Dropdown */}
-            <div className="flex justify-end mb-6">
-              <Select value={sortOption} onValueChange={(v) => setSortOption(v as SortOption)}>
-                <SelectTrigger className="w-32 px-2 py-1 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-lg border border-[hsl(var(--border))]">
-                  <SelectValue placeholder="Sort models" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">Default</SelectItem>
-                  <SelectItem value="nameAsc">Name A → Z</SelectItem>
-                  <SelectItem value="nameDesc">Name Z → A</SelectItem>
-                  <SelectItem value="paramAsc">Param Size ↑</SelectItem>
-                  <SelectItem value="paramDesc">Param Size ↓</SelectItem>
-                  <SelectItem value="familyAsc">Family A → Z</SelectItem>
-                  <SelectItem value="familyDesc">Family Z → A</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
             {/* Text Generation Models */}
-            <h2 className="flex items-center text-lg font-medium uppercase tracking-wide mb-4">
-              <MessageSquare className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
-              Text Generation
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="flex items-center text-lg font-medium uppercase tracking-wide">
+                <MessageSquare className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
+                Text Generation
+              </h2>
+              <div className="flex items-center space-x-2">
+                <Select value={textSortOption} onValueChange={(v) => setTextSortOption(v as SortOption)}>
+                  <SelectTrigger className="w-32 px-2 py-1 rounded-lg text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] focus:ring-0 focus:ring-offset-0 border-none">
+                    <ArrowUpDown className="w-3 h-3 mr-1 inline-block" />
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default</SelectItem>
+                    <SelectItem value="nameAsc">Name A → Z</SelectItem>
+                    <SelectItem value="nameDesc">Name Z → A</SelectItem>
+                    <SelectItem value="paramAsc">Param Size ↑</SelectItem>
+                    <SelectItem value="paramDesc">Param Size ↓</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div className="grid gap-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
               {displayedTextGenerationModels.map((model) => (
                 <Dialog key={model.name} open={isDialogOpen && selectedModelName === model.name} onOpenChange={(open) => { if (!open) { setIsDialogOpen(false); setSelectedModelName(null); } else { setIsDialogOpen(open); setSelectedModelName(model.name); } }}>
                   <DialogTrigger asChild>
-                    <div className="p-4 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-xl shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center transition transform hover:scale-105" onClick={() => handleModelClick(model.name)}>
+                    <div className="group relative p-4 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-xl shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center transition transform hover:scale-105" onClick={() => handleModelClick(model.name)}>
+                      <Info className="absolute top-2 right-2 w-4 h-4 text-[hsl(var(--muted-foreground))] opacity-0 group-hover:opacity-100 transition" />
                       <img src={modelInfos[model.name]?.family?.toLowerCase() === 'bert' ? embedIcon : getIconPath(model.name)} alt={model.name} className="w-10 h-10 mb-1" />
                       <span className="font-medium truncate">{getModelDisplayName(model.name)}</span>
+                      <div className="flex items-center text-sm text-[hsl(var(--muted-foreground))] mt-1">
+                        <Database className="w-4 h-4 mr-1" />
+                        <span>{modelInfos[model.name]?.parameter_size || '—'}</span>
+                      </div>
                     </div>
                   </DialogTrigger>
                   {selectedModelName === model.name && (
@@ -201,17 +229,39 @@ const Models: React.FC = () => {
             </div>
 
             {/* Vision Models */}
-            <h2 className="flex items-center text-lg font-medium uppercase tracking-wide mb-4">
-              <Image className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
-              Vision
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="flex items-center text-lg font-medium uppercase tracking-wide">
+                <Image className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
+                Vision
+              </h2>
+              <div className="flex items-center space-x-2">
+                <Select value={visionSortOption} onValueChange={(v) => setVisionSortOption(v as SortOption)}>
+                  <SelectTrigger className="w-32 px-2 py-1 rounded-lg text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] focus:ring-0 focus:ring-offset-0 border-none">
+                    <ArrowUpDown className="w-3 h-3 mr-1 inline-block" />
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default</SelectItem>
+                    <SelectItem value="nameAsc">Name A → Z</SelectItem>
+                    <SelectItem value="nameDesc">Name Z → A</SelectItem>
+                    <SelectItem value="paramAsc">Param Size ↑</SelectItem>
+                    <SelectItem value="paramDesc">Param Size ↓</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div className="grid gap-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
               {displayedVisionModels.map((model) => (
                 <Dialog key={model.name} open={isDialogOpen && selectedModelName === model.name} onOpenChange={(open) => { if (!open) { setIsDialogOpen(false); setSelectedModelName(null); } else { setIsDialogOpen(open); setSelectedModelName(model.name); } }}>
                   <DialogTrigger asChild>
-                    <div className="p-4 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-xl shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center transition transform hover:scale-105" onClick={() => handleModelClick(model.name)}>
+                    <div className="group relative p-4 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-xl shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center transition transform hover:scale-105" onClick={() => handleModelClick(model.name)}>
+                      <Info className="absolute top-2 right-2 w-4 h-4 text-[hsl(var(--muted-foreground))] opacity-0 group-hover:opacity-100 transition" />
                       <img src={modelInfos[model.name]?.family?.toLowerCase() === 'bert' ? embedIcon : getIconPath(model.name)} alt={model.name} className="w-10 h-10 mb-1" />
                       <span className="font-medium truncate">{getModelDisplayName(model.name)}</span>
+                      <div className="flex items-center text-sm text-[hsl(var(--muted-foreground))] mt-1">
+                        <Database className="w-4 h-4 mr-1" />
+                        <span>{modelInfos[model.name]?.parameter_size || '—'}</span>
+                      </div>
                     </div>
                   </DialogTrigger>
                   {selectedModelName === model.name && (
@@ -232,17 +282,39 @@ const Models: React.FC = () => {
             </div>
 
             {/* Embedding Models */}
-            <h2 className="flex items-center text-lg font-medium uppercase tracking-wide mb-4">
-              <Hash className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
-              Embedding
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="flex items-center text-lg font-medium uppercase tracking-wide">
+                <Hash className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
+                Embedding
+              </h2>
+              <div className="flex items-center space-x-2">
+                <Select value={embedSortOption} onValueChange={(v) => setEmbedSortOption(v as SortOption)}>
+                  <SelectTrigger className="w-32 px-2 py-1 rounded-lg text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] focus:ring-0 focus:ring-offset-0 border-none">
+                    <ArrowUpDown className="w-3 h-3 mr-1 inline-block" />
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">Default</SelectItem>
+                    <SelectItem value="nameAsc">Name A → Z</SelectItem>
+                    <SelectItem value="nameDesc">Name Z → A</SelectItem>
+                    <SelectItem value="paramAsc">Param Size ↑</SelectItem>
+                    <SelectItem value="paramDesc">Param Size ↓</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div className="grid gap-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
               {displayedEmbeddingModels.map((model) => (
                 <Dialog key={model.name} open={isDialogOpen && selectedModelName === model.name} onOpenChange={(open) => { if (!open) { setIsDialogOpen(false); setSelectedModelName(null); } else { setIsDialogOpen(open); setSelectedModelName(model.name); } }}>
                   <DialogTrigger asChild>
-                    <div className="p-4 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-xl shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center transition transform hover:scale-105" onClick={() => handleModelClick(model.name)}>
+                    <div className="group relative p-4 bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] rounded-xl shadow-md hover:shadow-lg cursor-pointer flex flex-col items-center transition transform hover:scale-105" onClick={() => handleModelClick(model.name)}>
+                      <Info className="absolute top-2 right-2 w-4 h-4 text-[hsl(var(--muted-foreground))] opacity-0 group-hover:opacity-100 transition" />
                       <img src={modelInfos[model.name]?.family?.toLowerCase() === 'bert' ? embedIcon : getIconPath(model.name)} alt={model.name} className="w-10 h-10 mb-1" />
                       <span className="font-medium truncate">{getModelDisplayName(model.name)}</span>
+                      <div className="flex items-center text-sm text-[hsl(var(--muted-foreground))] mt-1">
+                        <Database className="w-4 h-4 mr-1" />
+                        <span>{modelInfos[model.name]?.parameter_size || '—'}</span>
+                      </div>
                     </div>
                   </DialogTrigger>
                   {selectedModelName === model.name && (
