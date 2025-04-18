@@ -138,6 +138,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
   }, [sessionId, clearMessages])
 
   const regenerateResponse = (messageId: string): void => {
+    if (isControlled) return
     const messageIndex = messages.findIndex((m) => m.id === messageId)
     if (messageIndex < 1 || !sessionId) return
 
@@ -149,7 +150,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
     // Remove the assistant message that will be regenerated
     const updatedMessages = [...messages]
     updatedMessages.splice(messageIndex, 1)
-    setMessages(updatedMessages)
+    setMessages(updatedMessages as any)
     
     // Send the message again to trigger regeneration
     sendMessageMutation({
