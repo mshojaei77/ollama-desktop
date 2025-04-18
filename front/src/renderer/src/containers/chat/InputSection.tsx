@@ -1,4 +1,5 @@
 import { Input } from '@renderer/components/ui/input'
+import MessageContainer, { GenericMessage } from './MessageContainer'
 import { ModelsDropdown } from '@renderer/components/ModelsDropdown'
 import { useChatStore } from '@renderer/store/chatStore'
 import { useModels, useSendMessage } from '@renderer/fetch/queries'
@@ -24,8 +25,17 @@ interface PendingImage {
   id: string // Used locally to manage the indicator
 }
 
+// Default prompts for main chat
+const chatDefaultPrompts = [
+  "Explain quantum computing in simple terms",
+  "Got any creative ideas for a 10 year old's birthday?",
+  "How do I make an HTTP request in Javascript?",
+  "What is the meaning of life?"
+]
+
 const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element => {
   const [input, setInput] = useState('')
+  const chatMessages = useChatStore((state) => state.messages)
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
   const sessionId = useChatStore((state) => state.sessionId)
   const addMessage = useChatStore((state) => state.addMessage)
@@ -35,6 +45,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
   const { data: modelsResponse, isLoading: isLoadingModels } = useModels(apiConnected === true)
   const [toolsEnabled, setToolsEnabled] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textInputRef = useRef<HTMLInputElement>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null)
@@ -199,6 +210,20 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
 
   return (
     <div className="sticky bottom-0 p-4 bg-[hsl(var(--background))]">
+      {/* Default example prompts when no chat messages */}
+      {chatMessages.length === 0 && !pendingImageFile && (
+        <div className="mb-4 flex flex-wrap gap-2 justify-center">
+          {chatDefaultPrompts.map((prompt, idx) => (
+            <button
+              key={idx}
+              onClick={() => { setInput(prompt); textInputRef.current?.focus() }}
+              className="px-4 py-2 bg-card border border-border rounded-lg text-sm hover:bg-primary/10 transition"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
       {/* Show uploaded CONTEXT files */} 
       {uploadedFiles.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
@@ -244,6 +269,7 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
       <div className="flex flex-col w-full bg-[hsl(var(--card))] rounded-lg border">
         <div className="px-4 pt-3">
           <Input
+            ref={textInputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}

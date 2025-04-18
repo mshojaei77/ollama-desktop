@@ -33,6 +33,7 @@ const ChatHeader = () => {
   // Fetch detailed info for tags and dialog
   const { data: modelDetails } = useModelInfo(selectedModelId);
   const tags = modelDetails?.tags || []; // Get tags, default to empty array
+  const filteredTags = tags.filter(tag => tag.toLowerCase() !== 'pytorch'); // Filter out 'pytorch'
 
   if (!selectedModelId) {
     return null; // Don't render if no model is selected
@@ -59,15 +60,15 @@ const ChatHeader = () => {
         <div className="flex-grow overflow-hidden mr-2"> {/* Added margin-right */}
           <h2 className="text-base font-medium truncate">{getModelDisplayName(displayName)}</h2>
           {/* Render Tags if they exist */}
-          {tags.length > 0 && (
+          {filteredTags.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1 items-center"> {/* Ensure vertical alignment */}
-              {tags.slice(0, 3).map(tag => ( // Limit initially visible tags (example: show first 3)
+              {filteredTags.slice(0, 3).map(tag => ( // Use filteredTags
                 <Badge key={tag} variant="secondary" className="text-xs px-1.5 py-0.5 whitespace-nowrap">
                   {tag}
                 </Badge>
               ))}
-              {tags.length > 3 && ( // Indicate more tags if applicable
-                 <span className="text-xs text-muted-foreground ml-1">+{tags.length - 3} more</span>
+              {filteredTags.length > 3 && ( // Use filteredTags for count
+                 <span className="text-xs text-muted-foreground ml-1">+{filteredTags.length - 3} more</span>
               )}
             </div>
           )}

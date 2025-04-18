@@ -1,5 +1,7 @@
 """
 Ollama MCP API - Integration example with FastAPI
+run with: uvicorn ollama_mcp_api:app --reload
+or python -m uvicorn ollama_mcp_api:app --reload
 """
 
 import os
@@ -12,6 +14,15 @@ from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 import tempfile
 import shutil
 from pathlib import Path
+
+# Add sys import and path modification
+import sys
+import os
+# Ensure the parent directory (containing the 'api' package) is in the Python path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form

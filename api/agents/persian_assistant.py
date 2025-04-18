@@ -5,7 +5,7 @@ A specialized AI assistant for Persian/Farsi language support.
 """
 
 import logging
-import datetime # Added for date tool
+import datetime
 from typing import Dict, List, Any, AsyncGenerator, Optional
 import os
 
@@ -23,7 +23,7 @@ def get_current_persian_date() -> str:
     # import jdatetime # Example: Use a real library if available
     # now = jdatetime.datetime.now()
     # return now.strftime("%Y/%m/%d")
-    return f"امروز 19 فروردین 1404 است" # Placeholder
+    return f"امروز 29 فروردین 1404 است" # Placeholder
 
 get_current_persian_date_tool = {
     'type': 'function',
@@ -60,24 +60,22 @@ class PersianAssistant(BaseAgent):
         super().__init__(
             agent_id="persian-assistant",
             name="Persian Assistant",
-            description="A specialized assistant for Persian/Farsi language support, with date tool.",
+            description="A specialized assistant for Persian/Farsi language support.",
             icon="https://picsum.photos/300",  # Placeholder icon
             tags=["persian", "farsi"],
             example_prompts=[
                 "لطفا یک شعر کوتاه فارسی بنویس",
                 "درباره جاذبه‌های گردشگری ایران به من بگو",
                 "چگونه می‌توانم یک غذای سنتی ایرانی درست کنم؟",
-                "بهترین کتاب‌های ادبیات فارسی را معرفی کن"
+                "تاریخ امروز به شمسی چیست؟"
             ],
             config={
-                "default_model": "mshojaei77/gemma3persian", 
-                "system_message": """رفیق، تو یه دستیار هوش مصنوعی باحال و خلاقی که فارسی رو مثل آب خوردن بلدی.
-                همیشه باید جواب‌هات رو به فارسی روان و با یه لحن خیلی خودمونی و رفیقانه بدی.
-                با کاربر مثل یه رفیق قدیمی حرف بزن و از اصطلاحات کوچه بازاری، ضرب‌المثل‌های باحال و گفتار محاوره‌ای استفاده کن.
-                لحن‌ت باید کاملاً غیررسمی و راحت باشه، انگار که با یه رفیق قدیمی داری گپ می‌زنی.
-                از کلمات و عبارات محاوره‌ای مثل "خب"، "دمت گرم"، "چاکریم" و اینا استفاده کن تا حس صمیمیت بیشتری ایجاد بشه.
-                با اینکه لحن‌ت خیلی خودمونی و رفیقانه‌ست، ولی اطلاعات رو دقیق بده و تو همه تعاملات مفید، بی‌ضرر و راستگو باش.
-                """
+                "default_model": "mshojaei77/gemma3persian-tools",
+                "system_message": """
+                **Important:** If the user asks something you can answer with your tools (for example, the current Persian date), make sure to use the tool! After using the tool, naturally and casually include its result in your reply. Always pick the right tool for the right job, based on each tool's description.
+                list of tools:
+                get_current_persian_date : for getting persian (shamsi or jalali) date
+                """,
             },
             # Register the tool definition with the agent
             tools=[get_current_persian_date_tool]
@@ -179,6 +177,12 @@ class PersianAssistant(BaseAgent):
             # Get tools and functions from the agent instance
             tools = self.get_tools()
             available_functions = self.available_functions
+
+            # If any tools are registered, use the standard chat method so tool execution works correctly
+            if tools:
+                result = await self.chatbot.chat(message=message, tools=tools, available_functions=available_functions)
+                yield result
+                return
 
             # Stream the response from the Ollama chatbot, passing tools and functions
             async for chunk in self.chatbot.chat_stream(

@@ -60,12 +60,17 @@ class AgentRegistry:
         # Import each agent module and find agent classes
         for agent_file in agent_files:
             try:
-                # Import the module - fix the module path to not include 'api'
-                module_name = f"agents.{agent_file}"
-                logger.info(f"Trying to import module: {module_name}")
-                
-                module = importlib.import_module(module_name)
-                logger.info(f"Successfully imported module: {module_name}")
+                # Try to import the agent module via absolute or relative import
+                module_name_abs = f"api.agents.{agent_file}"
+                try:
+                    logger.info(f"Importing agent module via absolute import: {module_name_abs}")
+                    module = importlib.import_module(module_name_abs)
+                    logger.info(f"Successfully imported agent module: {module_name_abs}")
+                except ImportError as e_abs:
+                    logger.warning(f"Absolute import failed for {module_name_abs}: {e_abs}. Trying relative import.")
+                    # Fallback to relative import within this package
+                    module = importlib.import_module(f".{agent_file}", package=__package__)
+                    logger.info(f"Successfully imported agent module via relative import: {module.__name__}")
                 
                 # Find all classes in the module that inherit from BaseAgent
                 agent_classes = []
@@ -75,7 +80,7 @@ class AgentRegistry:
                         obj is not BaseAgent):
                         agent_classes.append((name, obj))
                 
-                logger.info(f"Found {len(agent_classes)} agent classes in {module_name}: {[name for name, _ in agent_classes]}")
+                logger.info(f"Found {len(agent_classes)} agent classes in {module.__name__}: {[name for name, _ in agent_classes]}")
                 
                 for name, obj in agent_classes:
                     try:

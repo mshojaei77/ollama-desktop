@@ -1,16 +1,33 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import { getIconPath, copyToClipboardWithFeedback } from '../../utils'
+import { getIconPath, copyToClipboardWithFeedback, getAgentIconPath } from '../../utils'
 import { MessageActions } from '../../components/MessageActions'
 import { useChatStore } from '@renderer/store/chatStore'
 import { queryClient, useChatHistory, useSendMessage } from '@renderer/fetch/queries'
 import { useEffect, useRef, useState } from 'react'
 import { copyToClipboard } from '../../utils'
 
-const MessageContainer = (): JSX.Element => {
+// Define generic message type and props for external use
+export interface GenericMessage {
+  id: string
+  role: 'user' | 'assistant' | 'agent'
+  content: string
+  timestamp?: Date
+  isLoading?: boolean
+  agentId?: string
+}
+
+interface MessageContainerProps {
+  messages?: GenericMessage[]
+  isStreaming?: boolean
+  onRefresh?: (id: string) => void
+}
+
+const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming, onRefresh }: MessageContainerProps = {}): JSX.Element => {
   const sessionId = useChatStore((state) => state.sessionId)
-  const messages = useChatStore((state) => state.messages)
+  const storeMessages = useChatStore((state) => state.messages)
+  const messages = propMessages ?? storeMessages
   const setMessages = useChatStore((state) => state.setMessages)
   const clearMessages = useChatStore((state) => state.clearMessages)
   const selectedModel = useChatStore((state) => state.selectedModel)
@@ -20,6 +37,9 @@ const MessageContainer = (): JSX.Element => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const lastScrollHeightRef = useRef<number>(0)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Determine if controlled by external props
+  const isControlled = propMessages !== undefined
 
   const {
     data: chatHistoryData,
@@ -50,10 +70,14 @@ const MessageContainer = (): JSX.Element => {
   useEffect(() => {
     // Update streaming state based on message sending status
     console.log('Message sending status changed:', { isSendingMessage, isSendError })
-    setIsStreaming(isSendingMessage)
+    if (propIsStreaming === undefined) {
+      setIsStreaming(isSendingMessage)
+    }
   }, [isSendingMessage, isSendError])
 
+  // Load chat history when uncontrolled
   useEffect(() => {
+    if (isControlled) return
     if (chatHistoryData && chatHistoryData.history) {
       console.log('Received chat history:', chatHistoryData)
       clearMessages()
@@ -70,7 +94,7 @@ const MessageContainer = (): JSX.Element => {
         setMessages(formattedMessages)
       }, 0)
     }
-  }, [chatHistoryData, setMessages, clearMessages])
+  }, [chatHistoryData, setMessages, clearMessages, isControlled])
 
   // Smart scrolling behavior that respects user scrolling during streaming
   useEffect(() => {
@@ -103,6 +127,7 @@ const MessageContainer = (): JSX.Element => {
   }, [messages, isStreaming])
 
   useEffect(() => {
+    if (isControlled) return
     if (sessionId) {
       console.log('Invalidating chat history for session:', sessionId)
       queryClient.invalidateQueries({ queryKey: ['chatHistory', sessionId] })
@@ -132,23 +157,26 @@ const MessageContainer = (): JSX.Element => {
     })
   }
 
+  // Use external refresh handler if provided
+  const handleRefresh = onRefresh ?? regenerateResponse
+
   return (
     <div 
       ref={scrollContainerRef} 
       className="flex-1 p-4 overflow-y-auto px-20 hide-scrollbar"
     >
-      {isLoadingHistory && (
+      {/* Loading/Error indicators only when uncontrolled */}
+      {!isControlled && isLoadingHistory && (
         <div className="flex justify-center my-8">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
           <span className="ml-2 text-sm text-[hsl(var(--muted-foreground))]">Loading chat history...</span>
         </div>
       )}
 
-      {historyError && (
+      {!isControlled && historyError && (
         <div className="mx-auto max-w-4xl my-4 p-3 border rounded-lg border-red-300 bg-[hsl(var(--card))] text-red-700">
           <p>
-            Error loading chat history:{' '}
-            {historyError instanceof Error ? historyError.message : 'Unknown error'}
+            Error loading chat history: {historyError instanceof Error ? historyError.message : 'Unknown error'}
           </p>
           <button
             onClick={() => refetchHistory()}
@@ -159,24 +187,26 @@ const MessageContainer = (): JSX.Element => {
         </div>
       )}
 
+      {/* Messages list */}
       <div className="max-w-4xl mx-auto space-y-6">
         {messages.map((message) => {
           const isLastAssistantMessage = 
-            message.role === 'assistant' && 
+            (message.role === 'assistant' || message.role === 'agent') && 
             message.id === messages[messages.length - 1]?.id &&
-            isStreaming;
-            
+            (propIsStreaming !== undefined ? propIsStreaming : isStreaming);
+
           return (
             <div
               key={message.id}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              {message.role === 'assistant' && (
+              {(message.role === 'assistant' || message.role === 'agent') && (
                 <div className="flex-shrink-0 mr-2">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-white dark:bg-white text-blue-600 dark:text-blue-600">
                     <img
-                      src={getIconPath(selectedModel)}
-                      alt=""
+                      // Use agent icon if role is agent, otherwise use selected model icon
+                      src={message.role === 'agent' ? getAgentIconPath(message.agentId || 'agent-placeholder') : getIconPath(selectedModel)}
+                      alt="Icon"
                       className="w-6 h-6 rounded-full"
                       onError={(e) => {
                         // Fallback to default icon using a root-relative path
@@ -188,7 +218,7 @@ const MessageContainer = (): JSX.Element => {
               )}
               <div className="flex flex-col max-w-[80%]">
                 <div
-                  className={`rounded-2xl p-3 ${
+                  className={`rounded-2xl p-3 ${ 
                     message.role === 'user'
                       ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
                       : 'bg-[hsl(var(--card))] border border-[hsl(var(--border))]'
@@ -253,19 +283,20 @@ const MessageContainer = (): JSX.Element => {
                     <span className="inline-block ml-1 animate-pulse">▋</span>
                   )}
                 </div>
-                {message.role === 'assistant' && !isLastAssistantMessage && (
+                {/* Regenerate Button (only for completed assistant or agent messages) */}
+                {(message.role === 'assistant' || message.role === 'agent') && !isLastAssistantMessage && (
                   <MessageActions
                     message={message}
                     onCopy={copyToClipboard}
-                    onRefresh={regenerateResponse}
+                    onRefresh={handleRefresh}
                   />
                 )}
               </div>
             </div>
           );
         })}
-        <div ref={messagesEndRef} />
       </div>
+      <div ref={messagesEndRef} />
     </div>
   )
 }
