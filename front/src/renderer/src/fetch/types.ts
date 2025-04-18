@@ -35,8 +35,12 @@ export interface InitializeChatResponse {
 }
 
 export interface SendMessageParams {
+  /** The text of the user message to send or regenerate. */
   message: string
+  /** The session ID for this chat. */
   session_id: string
+  /** If true, skip automatically re-adding the user message (used for regenerations). */
+  skipUser?: boolean
 }
 
 export interface SendMessageResponse {

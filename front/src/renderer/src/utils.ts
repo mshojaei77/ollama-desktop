@@ -15,7 +15,9 @@ export const getModelBaseName = (modelName: string): string => {
   }
 
   if (repoName.includes('-')) {
-    return repoName.split('-')[0].toLowerCase()
+    const part = repoName.split('-')[0]
+    const match = part.match(/^([a-zA-Z]+)/)
+    return match && match[1] ? match[1].toLowerCase() : part.toLowerCase()
   }
 
   const match = repoName.match(/^([a-zA-Z]+)/)

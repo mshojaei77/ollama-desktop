@@ -82,8 +82,9 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
       console.log('Received chat history:', chatHistoryData)
       clearMessages()
 
-      const formattedMessages = chatHistoryData.history.map((msg) => ({
-        id: msg.id,
+      const formattedMessages = chatHistoryData.history.map((msg, idx) => ({
+        // Use the returned id if present, otherwise fall back to a generated key
+        id: msg.id ?? `history-${idx}`,
         role: msg.role,
         content: msg.message,
         timestamp: new Date(msg.timestamp)
@@ -153,7 +154,8 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
     // Send the message again to trigger regeneration
     sendMessageMutation({
       message: userMessage.content,
-      session_id: sessionId
+      session_id: sessionId,
+      skipUser: true
     })
   }
 

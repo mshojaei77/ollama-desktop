@@ -347,9 +347,11 @@ export const useSendMessage = (): UseMutationResult<
         timestamp: new Date()
       }
 
-      // Add user message to store
-      console.log('Adding user message to store')
-      addMessage(userMessage)
+      // Add user message to store (skip if regenerating)
+      if (!variables.skipUser) {
+        console.log('Adding user message to store')
+        addMessage(userMessage)
+      }
 
       const assistantMessageId = (Date.now() + 1).toString()
       const assistantMessage = {

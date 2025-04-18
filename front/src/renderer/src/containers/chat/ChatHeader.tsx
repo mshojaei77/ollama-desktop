@@ -52,7 +52,7 @@ const ChatHeader = () => {
             alt={`${displayName} icon`}
             className="w-5 h-5 rounded-full object-contain" // Slightly smaller icon
             onError={(e) => {
-              e.currentTarget.src = new URL('../assets/models/default.png', import.meta.url).href;
+              e.currentTarget.src = new URL('../../assets/models/default.png', import.meta.url).href;
             }}
           />
         </div>
