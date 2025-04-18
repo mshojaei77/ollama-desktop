@@ -36,6 +36,14 @@ from api.config_io import read_ollama_config, write_ollama_config
 from api.agents.routes import router as agents_router  # Import the agents router
 from api.agents.registry import agent_registry  # Import the agent registry
 
+# Import scraper functions
+from api.scrape_ollama import (
+    fetch_popular_models,
+    fetch_vision_models,
+    fetch_tools_models,
+    fetch_newest_models
+)
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Ollama MCP API",
@@ -1168,6 +1176,26 @@ async def chat_vision(
     await db.update_session_activity(session_id)
     return ChatResponse(response=response_content, session_id=session_id)
 
+# Add scraped models endpoint
+@app.get("/models/scraped", tags=["Models"])
+async def get_scraped_models():
+    """
+    Scrape models from ollama.com and return popular, vision, tools, and newest models.
+    """
+    try:
+        popular = await asyncio.to_thread(fetch_popular_models)
+        vision = await asyncio.to_thread(fetch_vision_models)
+        tools = await asyncio.to_thread(fetch_tools_models)
+        newest = await asyncio.to_thread(fetch_newest_models)
+        return {
+            "popular": popular,
+            "vision": vision,
+            "tools": tools,
+            "newest": newest
+        }
+    except Exception as e:
+        app_logger.error(f"Error scraping models: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error scraping models: {str(e)}")
 
 # ----- Programmatic API Examples -----
 
