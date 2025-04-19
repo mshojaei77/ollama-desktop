@@ -10,8 +10,8 @@ import datetime
 from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
 import logging
-from api.config_io import read_ollama_config
-from api.ollama_mcp_api import app_logger
+from app.core.config import read_ollama_config
+from app.core.chatbot import app_logger
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ollama_mcp.db")

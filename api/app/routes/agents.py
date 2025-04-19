@@ -6,56 +6,24 @@ This module defines FastAPI routes for interacting with agents.
 
 import json
 import logging
-from typing import Dict, List, Optional, Any
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from .registry import agent_registry
+from app.services.agents.registry import agent_registry
+from app.schemas.agents import (
+    AgentMetadata,
+    AgentListResponse,
+    AgentMessageRequest,
+    AgentMessageResponse
+)
 
 
 # Setup logging
 logger = logging.getLogger("agent_routes")
 
 # Create a router for agent endpoints
-router = APIRouter(
-    prefix="/agents",
-    tags=["Agents"],
-    responses={404: {"description": "Not found"}}
-)
-
-
-# ----- Pydantic Models for Request/Response -----
-
-class AgentMetadata(BaseModel):
-    """Agent metadata model."""
-    id: str
-    name: str
-    description: str
-    icon: str
-    tags: List[str]
-    examplePrompts: Optional[List[str]] = None
-
-
-class AgentListResponse(BaseModel):
-    """Response model for listing agents."""
-    agents: List[AgentMetadata]
-    count: int
-
-
-class AgentMessageRequest(BaseModel):
-    """Request model for sending a message to an agent."""
-    message: str
-    session_id: Optional[str] = None
-    context: Optional[Dict[str, Any]] = None
-
-
-class AgentMessageResponse(BaseModel):
-    """Response model for an agent message."""
-    response: str
-    agent_id: str
-    session_id: Optional[str] = None
+router = APIRouter(prefix="/agents", tags=["Agents"])
 
 
 # ----- API Routes -----

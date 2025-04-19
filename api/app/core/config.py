@@ -1,6 +1,11 @@
 import json
 import os
 import platform
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+_CACHE_EXPIRY_SECONDS = 300 
+ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".md", ".pdf"}
 
 def read_ollama_config():
     """
@@ -109,31 +114,41 @@ def write_ollama_config(config_data):
         print(f"Error writing config file: {e}")
         return False
 
-if __name__ == "__main__":
-    # Example usage
-    # Uncomment to test writing a new config
+def get_cache_expiry_seconds():
     """
-    sample_config = {
-        "mcpServers": {
-            "fetch": {
-                "command": "uvx",
-                "args": ["mcp-server-fetch"]
-            }
-        }
+    Get the cache expiry seconds for the ollama_desktop_config.json file.
+    """
+    return _CACHE_EXPIRY_SECONDS
+
+def get_allowed_upload_extensions():
+    """
+    Get the allowed upload extensions for the ollama_desktop_config.json file.
+    """
+    return ALLOWED_UPLOAD_EXTENSIONS
+
+def configure_middleware(app: FastAPI):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # In production, limit to your frontend URL
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+def get_app_settings():
+    return {
+        "title": "Ollama MCP API",
+        "description": "API for interacting with Ollama models and MCP tools",
+        "version": "1.0.0",
+        "docs_url": "/docs",
+        "redoc_url": "/redoc",
+        "openapi_url": "/openapi.json",
+        "openapi_tags": [
+            {"name": "Chat", "description": "Operations for working with standalone Ollama chatbots"},
+            {"name": "MCP", "description": "Operations for working with MCP-enabled clients and tools"},
+            {"name": "Sessions", "description": "Operations for managing sessions and retrieving chat history"},
+            {"name": "Models", "description": "Operations for getting information about available models"},
+            {"name": "Agents", "description": "Operations for working with specialized AI agents"},
+            {"name": "Context", "description": "Operations for adding context from files to sessions"},
+        ]
     }
-    
-    if write_ollama_config(sample_config):
-        print("Successfully wrote configuration file.")
-    else:
-        print("Failed to write configuration file.")
-    """
-    
-    # Read the configuration
-    config = read_ollama_config()
-    
-    # Display the configuration if available
-    if config:
-        print("Ollama Desktop Configuration:")
-        print(json.dumps(config, indent=2))
-    else:
-        print("Failed to read configuration file.")

@@ -59,8 +59,8 @@ import re
 
 
 # Import the logger
-from api.logger import app_logger
-from api.config_io import read_ollama_config
+from app.utils.logger import app_logger
+from app.core.config import read_ollama_config
 
 # Added imports for RAG
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -75,78 +75,11 @@ except ImportError:
     pypdf = None # Handle optional dependency
 
 # Import embedding models scraper function
-from api.scrape_ollama import fetch_embedding_models
+from app.services.scrape_ollama import fetch_embedding_models
 
 load_dotenv()  # load environment variables from .env
 
-class BaseChatbot:
-    """Base class for chatbot implementations"""
-
-    def __init__(
-        self,
-        model_name: str = "llama3.2",
-        vision_model_name: str = "granite3.2-vision",
-        system_message: Optional[str] = None,
-        verbose: bool = False,
-    ):
-        """
-        Initialize the base chatbot.
-
-        Args:
-            model_name: Name of the model to use
-            system_message: Optional system message to set context
-            verbose: Whether to output verbose logs
-        """
-        self.model_name = model_name
-        self.system_message = system_message
-        self.verbose = verbose
-        self.memory = ConversationBufferMemory(return_messages=True)
-        # Added vector store attribute
-        self.vector_store: Optional[FAISS] = None
-        self.vector_store_path: Optional[Path] = None # Store path for persistence if needed
-        # Store the vision model name
-        self.vision_model_name = vision_model_name
-
-    async def initialize(self) -> None:
-        """Initialize the chatbot - to be implemented by subclasses"""
-        raise NotImplementedError("Subclasses must implement initialize()")
-
-    async def chat(self, message: str) -> str:
-        """Process a chat message and return the response"""
-        raise NotImplementedError("Subclasses must implement chat()")
-
-    async def cleanup(self) -> None:
-        """Clean up any resources used by the chatbot"""
-        # Base implementation resets memory
-        self.memory = ConversationBufferMemory(return_messages=True)
-        # Clean up vector store if it exists and was stored temporarily
-        if self.vector_store_path and self.vector_store_path.exists():
-             try:
-                 # Check if it's a directory before removing
-                 if self.vector_store_path.is_dir():
-                     shutil.rmtree(self.vector_store_path)
-                     app_logger.info(f"Removed temporary vector store at {self.vector_store_path}")
-                 elif self.vector_store_path.is_file():
-                    # FAISS can also save as a single file with .faiss extension
-                    self.vector_store_path.unlink()
-                    app_logger.info(f"Removed temporary vector store file at {self.vector_store_path}")
-
-             except Exception as e:
-                 app_logger.error(f"Error removing vector store at {self.vector_store_path}: {e}")
-        self.vector_store = None
-        self.vector_store_path = None
-
-    def get_history(self) -> List[BaseMessage]:
-        """Get the conversation history"""
-        memory_variables = self.memory.load_memory_variables({})
-        return memory_variables.get("history", [])
-
-    def clear_history(self) -> None:
-        """Clear the conversation history"""
-        self.memory.clear()
-
-
-class OllamaChatbot(BaseChatbot):
+class Chatbot():
     """Chatbot implementation using Ollama and LangChain"""
 
     def __init__(
@@ -179,7 +112,11 @@ class OllamaChatbot(BaseChatbot):
             chunk_size: Size of text chunks for vector store
             chunk_overlap: Overlap between text chunks
         """
-        super().__init__(model_name, vision_model_name, system_message, verbose)
+        # Initialize attributes directly instead of calling super().__init__
+        self.model_name = model_name
+        self.vision_model_name = vision_model_name
+        self.system_message = system_message
+        self.verbose = verbose
         self.base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.temperature = temperature
         self.top_p = top_p
@@ -194,10 +131,17 @@ class OllamaChatbot(BaseChatbot):
             separators=['\n\n', '\n', '. ', ' ', ''] # More robust separators
         )
         self._temp_dir_for_vs = None # To hold temp directory object
-        # Store the vision model name
-        self.vision_model_name = vision_model_name
         self.tools = []
         self.tool_enabled = False
+        # Added vector store attribute
+        self.vector_store: Optional[FAISS] = None
+        self.vector_store_path: Optional[Path] = None # Store path for persistence if needed
+        # Initialize memory for conversation
+        self.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            chat_memory=ChatMessageHistory(),
+            return_messages=True
+        )
 
     async def initialize(self) -> None:
         """Initialize the Ollama chatbot with tool binding support."""
@@ -770,7 +714,7 @@ class MCPClient:
             "Available tools will be provided after server connection."
         )
         # Initialize chatbot
-        self.chatbot = OllamaChatbot(
+        self.chatbot = Chatbot(
             model_name=self.model,
             system_message=placeholder_system_message,
             verbose=True
@@ -1041,6 +985,7 @@ class MCPClient:
             
             initial_result = await self.chatbot.chat(query)
             final_text = [initial_result]
+            tool_results = []
             
             # Look for tool calls in the response
             tool_call_pattern = r"\{\s*\"name\":\s*\"([^\"]+)\"\s*,\s*\"arguments\":\s*(\{[^}]+\})\s*\}"
@@ -1190,7 +1135,7 @@ class OllamaMCPPackage:
         system_message: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.7
-    ) -> OllamaChatbot:
+    ) -> Chatbot:
         """
         Create and initialize a standalone Ollama chatbot
 
@@ -1202,9 +1147,9 @@ class OllamaMCPPackage:
             temperature: Temperature parameter for generation
 
         Returns:
-            OllamaChatbot: Initialized chatbot
+            Chatbot: Initialized chatbot
         """
-        chatbot = OllamaChatbot(
+        chatbot = Chatbot(
             model_name=model_name,
             vision_model_name=vision_model_name,
             system_message=system_message,
@@ -1314,7 +1259,7 @@ class OllamaMCPPackage:
             Dict[str, Any]: Configuration dictionary with server information
         """
         try:
-            from api.config_io import read_ollama_config
+            from app.core.config import read_ollama_config
             config = read_ollama_config()
             if not config or not isinstance(config, dict):
                 app_logger.warning("Invalid or missing config, initializing with default.")

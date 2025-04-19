@@ -13,8 +13,6 @@ from .base_agent import BaseAgent
 
 logger = logging.getLogger("persian_assistant")
 
-# --- Example Tool Definition and Function ---
-
 def get_current_persian_date() -> str:
     """Returns the current date in the Persian (Jalali) calendar."""
     # This is a simplified example. A real implementation would use a library
@@ -42,7 +40,7 @@ get_current_persian_date_tool = {
 
 # Try to import OllamaMCPPackage, but don't fail if it's not available
 try:
-    from ollama_mcp import OllamaMCPPackage, OllamaChatbot # Added OllamaChatbot import
+    from app.core.ollama_mcp import OllamaMCPPackage, OllamaChatbot # Added OllamaChatbot import
 except ImportError:
     logger.warning("OllamaMCPPackage not available, will use fallback mode")
     OllamaMCPPackage = None
