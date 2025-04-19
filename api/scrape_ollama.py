@@ -49,5 +49,13 @@ def fetch_embedding_models():
     return fetch_models("?c=embedding")
 
 if __name__ == "__main__":
-    data = fetch_embedding_models()
-    print(json.dumps(data, indent=2, ensure_ascii=False))
+    all_data = {
+        "popular": fetch_popular_models(),
+        "vision": fetch_vision_models(),
+        "tools": fetch_tools_models(),
+        "newest": fetch_newest_models(),
+        "embedding": fetch_embedding_models()
+    }
+    with open("ollama_models.json", "w", encoding="utf-8") as f:
+        json.dump(all_data, f, indent=2, ensure_ascii=False)
+    print("Saved all model categories to ollama_models.json")

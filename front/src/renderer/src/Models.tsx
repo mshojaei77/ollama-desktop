@@ -29,6 +29,7 @@ import { ModelDetails } from './fetch/types'
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from './components/ui/select'
 import { getIconPath, getModelDisplayName } from './utils'
 import embedIcon from './assets/models/embed.png'
+import ollamaModelsData from './assets/ollama_models.json'
 import AddModel from './components/models/AddModel'
 
 const Models: React.FC = () => {
@@ -88,26 +89,54 @@ const Models: React.FC = () => {
     setIsDialogOpen(true)
   }
 
-  // Categorize models into three groups based on name patterns and family
+  // Categorize models into text, vision, and embedding using JSON tags (with prefix matching) and fallbacks
+  const tagMap = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const item of ollamaModelsData.popular) {
+      map.set(item.name.toLowerCase(), item.tags)
+    }
+    return map
+  }, [])
   const multimodalPatterns = ['vision', 'clip', 'image']
-  const textGenerationModels = modelsResponse?.models.filter((m) => {
+  function getTagsForModel(modelName: string): string[] {
+    const nameLower = modelName.toLowerCase()
+    let tags = tagMap.get(nameLower)
+    if (!tags) {
+      // try prefix match: e.g. 'moondream2' includes 'moondream'
+      const foundKey = Array.from(tagMap.keys()).find(key => nameLower.includes(key))
+      if (foundKey) tags = tagMap.get(foundKey)
+    }
+    return tags ?? []
+  }
+  const textGenerationModels = modelsResponse?.models.filter(m => {
+    const tags = getTagsForModel(m.name)
+    if (tags.length) {
+      // any non-vision/embedding tags -> text generation
+      return tags.every(t => t !== 'vision' && t !== 'embedding')
+    }
+    // fallback to regex-based logic
     const nameLower = m.name.toLowerCase()
-    const isVision = multimodalPatterns.some((p) => nameLower.includes(p))
+    const isVision = multimodalPatterns.some(p => nameLower.includes(p))
     const isEmbedName = nameLower.includes('embed')
     const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
     return !isVision && !isEmbedName && !isBertFamily
   }) || []
-  const multimodalModels = modelsResponse?.models.filter((m) => {
+  const multimodalModels = modelsResponse?.models.filter(m => {
+    const tags = getTagsForModel(m.name)
+    if (tags.includes('vision')) return true
+    // fallback to regex-based logic
     const nameLower = m.name.toLowerCase()
-    const isVision = multimodalPatterns.some((p) => nameLower.includes(p))
+    const isVision = multimodalPatterns.some(p => nameLower.includes(p))
     const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
     return isVision && !isBertFamily
   }) || []
-  const embeddingModels = modelsResponse?.models.filter((m) => {
-    const nameLower = m.name.toLowerCase()
-    const isEmbedName = nameLower.includes('embed')
+  const embeddingModels = modelsResponse?.models.filter(m => {
+    const tags = getTagsForModel(m.name)
     const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
-    return isEmbedName || isBertFamily
+    if (tags.includes('embedding') || isBertFamily) return true
+    // fallback to regex-based logic
+    const nameLower = m.name.toLowerCase()
+    return nameLower.includes('embed')
   }) || []
 
   // Prepare sorted lists and choose display based on sortOrder
@@ -236,7 +265,7 @@ const Models: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <h2 className="flex items-center text-lg font-medium uppercase tracking-wide">
                 <Image className="w-5 h-5 mr-2 text-[hsl(var(--primary))]" />
-                Vision
+                Vision / Multimodal
               </h2>
               <div className="flex items-center space-x-2">
                 <Select value={visionSortOption} onValueChange={(v) => setVisionSortOption(v as SortOption)}>
