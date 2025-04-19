@@ -1,3 +1,23 @@
+import sys
+import os
+import inspect
+
+# Determine the absolute path of the current script
+try:
+    current_file_path = os.path.abspath(inspect.getfile(inspect.currentframe()))
+except TypeError:
+    current_file_path = os.path.abspath(__file__)
+
+# Directory containing the script (api directory)
+script_dir = os.path.dirname(current_file_path)
+# Project root directory (parent of the script directory)
+project_root = os.path.dirname(script_dir)
+
+# If the project root isn't already in sys.path, add it.
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Now proceed with imports that rely on the project structure
 # pip install "mcp==1.3.0" langchain-ollama langchain-core
 
 import asyncio
@@ -33,6 +53,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain.memory import ConversationBufferMemory
 from dotenv import load_dotenv
 import anyio
+from tqdm import tqdm # Added import
 
 # Import the logger
 from api.logger import app_logger
@@ -49,6 +70,9 @@ try:
     import pypdf
 except ImportError:
     pypdf = None # Handle optional dependency
+
+# Import embedding models scraper function
+from api.scrape_ollama import fetch_embedding_models
 
 load_dotenv()  # load environment variables from .env
 
@@ -1193,37 +1217,55 @@ class OllamaMCPPackage:
             app_logger.error(f"Error getting MCP server config for '{server_name}': {str(e)}")
             return None
 
+    @staticmethod
+    def pull_model(model_name: str, stream: bool = True) -> Any:
+        """
+        Pull the specified Ollama model, returning a generator of progress dicts.
+        """
+        from ollama import pull
+        return pull(model_name, stream=stream)
+
+    @staticmethod
+    async def get_embedding_models() -> List[Dict[str, Any]]:
+        """Get a list of scraped embedding models from ollama.com"""
+        return await asyncio.to_thread(fetch_embedding_models)
+
 if __name__ == "__main__":
     async def main():
-        # Test standalone chatbot
-        print("--- Testing Standalone Chatbot ---")
-        chatbot = await OllamaMCPPackage.create_standalone_chatbot(
-            model_name="llama3.2",
-            vision_model_name="granite3.2-vision" # Specify vision model here too
-        )
-        response = await chatbot.chat("Hello! Tell me a short story.")
-        print(f"Chatbot Response: {response}")
-        await chatbot.cleanup()
+
+        # Test pulling a model with tqdm
+        print("--- Testing Model Pull with tqdm ---")
+        current_digest, bars = '', {}
+        # model_to_pull = "llama3.2" # Or change to another model like "moondream"
+        model_to_pull = "moondream"
+        try:
+            for progress in OllamaMCPPackage.pull_model(model_to_pull):
+                digest = progress.get('digest', '')
+                if digest != current_digest and current_digest in bars:
+                    bars[current_digest].close()
+
+                if not digest:
+                    # Handle status messages (like 'pulling manifest')
+                    status = progress.get('status')
+                    if status:
+                        print(status)
+                    continue
+
+                if digest not in bars and (total := progress.get('total')):
+                    # Use a short digest for the description
+                    short_digest = digest.split(':')[-1][:12] if ':' in digest else digest[:12]
+                    bars[digest] = tqdm(total=total, desc=f'pulling {short_digest}', unit='B', unit_scale=True)
+
+                if digest in bars and (completed := progress.get('completed')):
+                    bars[digest].update(completed - bars[digest].n)
+
+                current_digest = digest
+
+        finally:
+             # Ensure all bars are closed
+             for bar in bars.values():
+                 bar.close()
         print("\n")
 
-        # Test Vision Chatbot
-        print("--- Testing Vision Chatbot ---")
-        # Ensure the image file exists relative to this script
-        # You might need to create a dummy 'sample.png' or change the path
-        image_file = Path(__file__).parent / "sample.png"
-
-        if image_file.exists():
-            vision_chatbot = await OllamaMCPPackage.create_standalone_chatbot(
-                model_name="llama3.2", # Regular model for text fallback if needed
-                vision_model_name="granite3.2-vision" # Actual vision model used by chat_with_image
-            )
-            vision_prompt = "Describe this image in detail."
-            vision_response = await vision_chatbot.chat_with_image(vision_prompt, [image_file])
-            print(f"Vision Prompt: {vision_prompt}")
-            print(f"Vision Response: {vision_response}")
-            await vision_chatbot.cleanup()
-        else:
-            print(f"Skipping vision test: Image file not found at {image_file}")
-            print("Please create a 'sample.png' in the same directory as this script.")
 
     asyncio.run(main())

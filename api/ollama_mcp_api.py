@@ -41,7 +41,8 @@ from api.scrape_ollama import (
     fetch_popular_models,
     fetch_vision_models,
     fetch_tools_models,
-    fetch_newest_models
+    fetch_newest_models,
+    fetch_embedding_models
 )
 
 # Initialize FastAPI app
@@ -1187,15 +1188,39 @@ async def get_scraped_models():
         vision = await asyncio.to_thread(fetch_vision_models)
         tools = await asyncio.to_thread(fetch_tools_models)
         newest = await asyncio.to_thread(fetch_newest_models)
+        embedding = await asyncio.to_thread(fetch_embedding_models)
         return {
             "popular": popular,
             "vision": vision,
             "tools": tools,
-            "newest": newest
+            "newest": newest,
+            "embedding": embedding
         }
     except Exception as e:
         app_logger.error(f"Error scraping models: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error scraping models: {str(e)}")
+
+# Add endpoint for pulling models with progress streaming
+@app.get("/models/{model_name}/pull", tags=["Models"])
+async def pull_model_endpoint(model_name: str, stream: bool = True):
+    """
+    Pull the specified Ollama model and stream progress updates as newline-delimited JSON.
+    """
+    def iter_progress():
+        for progress in OllamaMCPPackage.pull_model(model_name, stream=stream):
+            # Convert to plain dict for JSON serialization
+            if isinstance(progress, dict):
+                progress_data = progress
+            elif hasattr(progress, "dict") and callable(progress.dict):
+                progress_data = progress.dict()
+            else:
+                try:
+                    progress_data = vars(progress)
+                except Exception:
+                    progress_data = progress
+            # Fallback to default=str for any non-serializable values
+            yield json.dumps(progress_data, default=str) + "\n"
+    return StreamingResponse(iter_progress(), media_type="application/x-ndjson")
 
 # ----- Programmatic API Examples -----
 

@@ -20,7 +20,8 @@ import {
   Search,
   Database,
   Info,
-  ExternalLink
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react'
 import ModelDetailsView from './components/ModelDetailsView'
 import apiClient from './fetch/api-client'
@@ -31,7 +32,7 @@ import embedIcon from './assets/models/embed.png'
 import AddModel from './components/models/AddModel'
 
 const Models: React.FC = () => {
-  const { data: modelsResponse, isLoading: isLoadingModels, error: modelsError, isError: isModelsError } = useModels()
+  const { data: modelsResponse, isLoading: isLoadingModels, error: modelsError, isError: isModelsError, refetch: refetchModels } = useModels()
   const [selectedModelName, setSelectedModelName] = useState<string | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   type SortOption = 'default' | 'nameAsc' | 'nameDesc' | 'paramAsc' | 'paramDesc'
@@ -159,6 +160,9 @@ const Models: React.FC = () => {
             <ExternalLink className="w-4 h-4 mr-2" />Browse Models
           </Button>
           <AddModel />
+          <Button variant="outline" onClick={() => { localStorage.removeItem('modelsResponse'); refetchModels(); }}>
+            <RefreshCw className="w-4 h-4" />
+          </Button>
         </div>
       </div>
       <div className="space-y-12">

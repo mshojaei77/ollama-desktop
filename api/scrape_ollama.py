@@ -45,6 +45,9 @@ def fetch_tools_models():
 def fetch_newest_models():
     return fetch_models("?o=newest")
 
+def fetch_embedding_models():
+    return fetch_models("?c=embedding")
+
 if __name__ == "__main__":
-    data = fetch_popular_models()
+    data = fetch_embedding_models()
     print(json.dumps(data, indent=2, ensure_ascii=False))

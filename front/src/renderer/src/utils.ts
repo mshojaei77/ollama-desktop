@@ -28,22 +28,21 @@ export const getModelBaseName = (modelName: string): string => {
   return repoName.toLowerCase()
 }
 
+// Load model and agent icon modules eagerly
+const modelIconModules = import.meta.glob('./assets/models/*.png', { eager: true, as: 'url' }) as Record<string, string>
+const agentIconModules = import.meta.glob('./assets/agents/*.png', { eager: true, as: 'url' }) as Record<string, string>
+
+// Replace getIconPath to fallback to default.png when no specific icon found
 export const getIconPath = (modelName: string): string => {
   const baseName = getModelBaseName(modelName)
-  try {
-    return new URL(`./assets/models/${baseName}.png`, import.meta.url).href
-  } catch {
-    return new URL('./assets/models/default.png', import.meta.url).href
-  }
+  const relativePath = `./assets/models/${baseName}.png`
+  return modelIconModules[relativePath] || modelIconModules['./assets/models/default.png']
 }
 
+// Replace getAgentIconPath to fallback to default.png when no specific agent icon found
 export const getAgentIconPath = (agentId: string): string => {
-  try {
-    return new URL(`./assets/agents/${agentId}.png`, import.meta.url).href
-  } catch {
-    // Return a default icon if the agent icon is not found
-    return new URL('./assets/models/default.png', import.meta.url).href
-  }
+  const relativePath = `./assets/agents/${agentId}.png`
+  return agentIconModules[relativePath] || modelIconModules['./assets/models/default.png']
 }
 
 export const getModelDisplayName = (modelName: string): string => {
