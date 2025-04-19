@@ -1,4 +1,5 @@
 import React from 'react'
+import ollamaModelsData from '../assets/ollama_models.json'
 import { useModelInfo } from '@renderer/fetch/queries' // Use alias path
 import { Loader2 } from 'lucide-react'
 
@@ -32,8 +33,24 @@ const ModelDetailsView: React.FC<{ modelName: string }> = ({ modelName }) => {
     .filter(([key]) => !['model_name', 'type'].includes(key)) // Example: exclude some keys
     .sort(([keyA], [keyB]) => keyA.localeCompare(keyB)); // Sort alphabetically
 
+  // Lookup JSON entry for this model (exact or prefix match)
+  const jsonEntry = ollamaModelsData.popular.find(item =>
+    item.name.toLowerCase() === modelName.toLowerCase() ||
+    modelName.toLowerCase().startsWith(item.name.toLowerCase())
+  )
+
   return (
     <div className="space-y-3 text-sm max-h-[60vh] overflow-y-auto pr-2">
+      {jsonEntry?.info && (
+        <div className="font-medium text-sm mb-1">{jsonEntry.info}</div>
+      )}
+      {jsonEntry?.tags?.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {jsonEntry.tags.map(tag => (
+            <span key={tag} className="px-2 py-1 bg-gray-200 rounded text-xs">{tag}</span>
+          ))}
+        </div>
+      )}
       {displayableDetails.map(([key, value]) => (
         <div key={key} className="flex justify-between border-b pb-1 border-[hsl(var(--border))]">
           <span className="font-medium capitalize text-[hsl(var(--muted-foreground))]">

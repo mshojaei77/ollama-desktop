@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import ModelDetailsView from './components/ModelDetailsView'
 import apiClient from './fetch/api-client'
-import { ModelDetails } from './fetch/types'
+import type { ModelDetails, ModelInfo } from './fetch/types'
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from './components/ui/select'
 import { getIconPath, getModelDisplayName } from './utils'
 import embedIcon from './assets/models/embed.png'
@@ -102,42 +102,34 @@ const Models: React.FC = () => {
     const nameLower = modelName.toLowerCase()
     let tags = tagMap.get(nameLower)
     if (!tags) {
-      // try prefix match: e.g. 'moondream2' includes 'moondream'
       const foundKey = Array.from(tagMap.keys()).find(key => nameLower.includes(key))
       if (foundKey) tags = tagMap.get(foundKey)
     }
     return tags ?? []
   }
-  const textGenerationModels = modelsResponse?.models.filter(m => {
-    const tags = getTagsForModel(m.name)
-    if (tags.length) {
-      // any non-vision/embedding tags -> text generation
-      return tags.every(t => t !== 'vision' && t !== 'embedding')
+  // Bucket models into exclusive categories: embedding, vision, or text
+  const buckets = useMemo(() => {
+    const text: ModelInfo[] = []
+    const vision: ModelInfo[] = []
+    const embed: ModelInfo[] = []
+    const seen = new Set<string>()
+    for (const m of modelsResponse?.models ?? []) {
+      if (seen.has(m.name)) continue
+      seen.add(m.name)
+      const nameLower = m.name.toLowerCase()
+      const tags = getTagsForModel(m.name)
+      const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
+      const isEmbed = tags.includes('embedding') || nameLower.includes('embed') || isBertFamily
+      const isVision = tags.includes('vision') || multimodalPatterns.some(p => nameLower.includes(p))
+      if (isEmbed) embed.push(m)
+      else if (isVision) vision.push(m)
+      else text.push(m)
     }
-    // fallback to regex-based logic
-    const nameLower = m.name.toLowerCase()
-    const isVision = multimodalPatterns.some(p => nameLower.includes(p))
-    const isEmbedName = nameLower.includes('embed')
-    const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
-    return !isVision && !isEmbedName && !isBertFamily
-  }) || []
-  const multimodalModels = modelsResponse?.models.filter(m => {
-    const tags = getTagsForModel(m.name)
-    if (tags.includes('vision')) return true
-    // fallback to regex-based logic
-    const nameLower = m.name.toLowerCase()
-    const isVision = multimodalPatterns.some(p => nameLower.includes(p))
-    const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
-    return isVision && !isBertFamily
-  }) || []
-  const embeddingModels = modelsResponse?.models.filter(m => {
-    const tags = getTagsForModel(m.name)
-    const isBertFamily = modelInfos[m.name]?.family?.toLowerCase() === 'bert'
-    if (tags.includes('embedding') || isBertFamily) return true
-    // fallback to regex-based logic
-    const nameLower = m.name.toLowerCase()
-    return nameLower.includes('embed')
-  }) || []
+    return { text, vision, embed }
+  }, [modelsResponse, modelInfos])
+  const textGenerationModels = buckets.text
+  const multimodalModels = buckets.vision
+  const embeddingModels = buckets.embed
 
   // Prepare sorted lists and choose display based on sortOrder
   const sortedTextAsc = [...textGenerationModels].sort((a, b) => a.name.localeCompare(b.name))
@@ -203,7 +195,7 @@ const Models: React.FC = () => {
         )}
         {isModelsError && (
           <div className="text-center text-red-600">
-            Failed to fetch models: {modelsError instanceof Error ? modelsError.message : 'Unknown error'}
+            Failed to fetch models: {modelsError?.message ?? 'Unknown error'}
           </div>
         )}
         {!isLoadingModels && !isModelsError && (
