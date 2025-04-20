@@ -437,7 +437,7 @@ class Chatbot():
             await self.initialize()
 
         if not self.ready:
-            yield "Chatbot is not ready. Please check the logs and try again."
+            yield f"data: {json.dumps({'type': 'error', 'response': 'Chatbot is not ready. Please check the logs and try again.'})}\n\n"
             return
 
         try:
@@ -499,7 +499,7 @@ class Chatbot():
                         content = chunk['message']['content']
                         if content:
                             full_response += content
-                            yield content
+                            yield f"data: {json.dumps({'type': 'token', 'response': content})}\n\n"
             except ImportError:
                 # Fallback to langchain implementation if ollama client not available
                 app_logger.warning("Ollama Python client not available, using LangChain fallback")
@@ -525,15 +525,15 @@ class Chatbot():
                     chunk_content = getattr(chunk, 'content', None)
                     if chunk_content:
                         full_response += chunk_content
-                        yield chunk_content
+                        yield f"data: {json.dumps({'type': 'token', 'response': chunk_content})}\n\n"
                     # Handle older formats or direct strings if necessary
                     elif isinstance(chunk, dict) and 'content' in chunk:
                         content = chunk['content']
                         full_response += content
-                        yield content
+                        yield f"data: {json.dumps({'type': 'token', 'response': content})}\n\n"
                     elif isinstance(chunk, str):
                         full_response += chunk
-                        yield chunk
+                        yield f"data: {json.dumps({'type': 'token', 'response': chunk})}\n\n"
             
             # Add the complete response to memory
             if full_response:
@@ -541,45 +541,12 @@ class Chatbot():
                 self.memory.chat_memory.add_message(AIMessage(content=full_response))
             else:
                 app_logger.warning("No response content received from stream")
-            # Prepare messages for the LLM
-            messages_for_llm = history + [HumanMessage(content=message)]
-            if context:
-                if messages_for_llm and isinstance(messages_for_llm[-1], HumanMessage):
-                    messages_for_llm[-1].content = f"{message}{context}"
-                else:
-                    messages_for_llm.append(HumanMessage(content=f"{message}{context}"))
-
-            app_logger.debug(f"Streaming LLM with {len(messages_for_llm)} messages.")
-            stream_gen = await asyncio.to_thread(
-                lambda: self.chat_model.stream(messages_for_llm)
-            )
-
-            full_response = ""
-            async for chunk in self._aiter_from_sync_iter(stream_gen):
-                if hasattr(chunk, 'content') and chunk.content:
-                    full_response += chunk.content
-                    yield chunk.content
-                elif hasattr(chunk, 'tool_calls') and chunk.tool_calls:
-                    # Handle tool calls
-                    for tool_call in chunk.tool_calls:
-                        tool_name = tool_call.get('name')
-                        tool_args = tool_call.get('arguments', {})
-                        yield f"I will use the {tool_name} tool to assist with your request."
-                        yield {"tool_call": {"name": tool_name, "arguments": tool_args}}
-                elif isinstance(chunk, dict) and 'content' in chunk:
-                    full_response += chunk['content']
-                    yield chunk['content']
-                elif isinstance(chunk, str):
-                    full_response += chunk
-                    yield chunk
-
-            self.memory.chat_memory.add_message(AIMessage(content=full_response))
-            yield None
 
         except Exception as e:
             error_msg = f"Error during chat streaming: {str(e)}"
             app_logger.error(error_msg, exc_info=True)
             yield error_msg
+
 
     async def _aiter_from_sync_iter(self, sync_iter):
         """Convert a synchronous iterator to an async iterator"""
@@ -612,6 +579,15 @@ class Chatbot():
         self.ready = False
         # Ensure vector_store is None after cleanup
         self.vector_store = None
+
+    def get_history(self) -> List[BaseMessage]:
+        """Get the conversation history"""
+        memory_variables = self.memory.load_memory_variables({})
+        return memory_variables.get("history", [])
+
+    def clear_history(self) -> None:
+        """Clear the conversation history"""
+        self.memory.clear()
 
     async def chat_with_image(self,
                               message: str,

@@ -1,3 +1,5 @@
+from app.core.chatbot import OllamaMCPPackage
+
 class ChatbotManager:
     _instance = None
 
@@ -7,8 +9,8 @@ class ChatbotManager:
             cls._instance.active_chatbots = {}
         return cls._instance
 
-    def add_chatbot(self, chatbot_id: int, name: str):
-        self.active_chatbots[chatbot_id] = {"name": name, "status": "active"}
+    def add_chatbot(self, chatbot_id: str, chatbot: OllamaMCPPackage):
+        self.active_chatbots[chatbot_id] = chatbot
 
     def get_chatbots(self):
         return self.active_chatbots

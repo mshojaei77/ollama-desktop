@@ -72,10 +72,7 @@ const fetchModels = async (): Promise<ModelsResponse> => {
 
 const initializeChat = async (params: InitializeChatParams): Promise<InitializeChatResponse> => {
   try {
-    const { data } = await apiClient.post<InitializeChatResponse>(
-      '/chat/initialize-with-mcp',
-      params
-    )
+    const { data } = await apiClient.post<InitializeChatResponse>('/chat/initialize', params)
     return data
   } catch (error) {
     console.error('Error initializing chat:', error)
@@ -198,7 +195,7 @@ const sendMessage = async (
   onStreamUpdate?: (chunk: string) => void
 ): Promise<SendMessageResponse> => {
   try {
-    const url = `${apiClient.defaults.baseURL}/mcp/query/stream`
+    const url = `${apiClient.defaults.baseURL}/chat/message/`
 
     // Track if we've received any valid text chunks
     let hasReceivedValidData = false
@@ -263,7 +260,7 @@ const fetchAvailableChats = async (
   offset = 0
 ): Promise<AvailableChatsResponse> => {
   try {
-    const { data } = await apiClient.get<AvailableChatsResponse>('/chats', {
+    const { data } = await apiClient.get<AvailableChatsResponse>('/chat/all', {
       params: { include_inactive: includeInactive, limit, offset }
     })
     return data

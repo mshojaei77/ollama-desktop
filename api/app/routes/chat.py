@@ -82,40 +82,7 @@ async def initialize_chatbot(request: InitializeRequest):
         # Handle other unexpected errors as 500
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@router.post("/message", response_model=ChatResponse, tags=["Chat"])
-async def chat_message(request: ChatRequest):
-    """
-    Send a message to a chatbot
-    
-    - Requires a valid session_id from a previous /chat/initialize call
-    - Returns the model's response to the user message
-    - Saves the conversation history to the database
-    """
-    chatbot = manager.get_chatbot(request.session_id)
-    if not chatbot:
-        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
-    
-    try:        # Save user message to history
-        await db.add_chat_message(request.session_id, "user", request.message)
-        
-        # Get response from chatbot
-        response = await chatbot.chat(request.message)
-        
-        # Save assistant response to history
-        await db.add_chat_message(request.session_id, "assistant", response)
-        
-        # Update session activity
-        await db.update_session_activity(request.session_id)
-        
-        return ChatResponse(
-            response=response,
-            session_id=request.session_id
-        )
-    except Exception as e:
-        app_logger.error(f"Error processing chat message: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat message: {str(e)}")
-
-@router.post("/message/stream", tags=["Chat"])
+@router.post("/message/", tags=["Chat"])
 async def chat_message_stream(request: ChatRequest):
     """
     Send a message to a chatbot and stream the response using SSE
@@ -151,11 +118,12 @@ async def chat_message_stream(request: ChatRequest):
                 app_logger.info(f"Using chatbot for session {request.session_id}")
                 
                 # Process query with MCP tools and stream the response
-                async for chunk in chatbot.process_query_stream(request.message):
+                async for chunk in chatbot.chat_stream(request.message):
                     if chunk is None:
                         break
                         
                     try:
+                        print("! chunk", chunk)
                         chunk_data = json.loads(chunk.replace('data: ', ''))
                     except json.JSONDecodeError as e:
                         app_logger.error(f"JSON decode error: {str(e)}. Chunk: {chunk}")
@@ -254,7 +222,7 @@ async def get_chat_history(
     )
 
 
-@router.get("/chats", response_model=AvailableChatsResponse, tags=["Sessions"])
+@router.get("/all", response_model=AvailableChatsResponse, tags=["Sessions"])
 async def get_chats(
     include_inactive: bool = False,
     limit: int = 100,
