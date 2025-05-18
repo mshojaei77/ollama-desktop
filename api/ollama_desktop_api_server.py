@@ -1318,7 +1318,7 @@ def start_server():
         raise
 
 def start_frontend():
-    """Start the frontend development server in a separate terminal"""
+    """Start the Electron app"""
     try:
         # Get the absolute path to the front directory
         front_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'front'))
@@ -1342,34 +1342,11 @@ def start_frontend():
             app_logger.error(f"Failed to install frontend dependencies: {e.stderr.decode()}")
             raise
             
-        # Start the development server
+        # Set environment variables
         env = dict(os.environ)
-        env['ELECTRON_START_URL'] = 'http://localhost:5173'  # Default Vite dev server URL
+        env['NODE_ENV'] = 'production'  # Force production mode
         
-        if sys.platform.startswith('win'):
-            # Windows: use npm.cmd and set proper working directory
-            process = subprocess.Popen(
-                [npm_cmd, 'run', 'dev'],
-                cwd=front_dir,
-                env=env,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-        else:
-            # Unix systems
-            process = subprocess.Popen(
-                [npm_cmd, 'run', 'dev'],
-                cwd=front_dir,
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-                
-        app_logger.info("Started frontend development server")
-        
-        # Give the dev server a moment to start
-        time.sleep(2)
-        
-        # Now start Electron
+        # Start the Electron app
         if sys.platform.startswith('win'):
             electron_process = subprocess.Popen(
                 [npm_cmd, 'run', 'start'],

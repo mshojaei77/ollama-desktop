@@ -163,12 +163,12 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
         throw new Error(result.detail || 'Error uploading file')
       }
 
-      // Handle response based on type (image or context)
-      if (result.type === 'image' && ALLOWED_IMAGE_TYPES.includes(extension)) {
+      // Handle response based on file extension
+      if (ALLOWED_IMAGE_TYPES.includes(extension)) {
         // Set the pending image state
         setPendingImage({ name: file.name, id: Date.now().toString() })
-        toast.success(result.message || `Image "${file.name}" attached. Add a prompt and send.`)
-      } else if (result.type === 'context' && ALLOWED_FILE_TYPES.includes(extension)) {
+        toast.success(`Image "${file.name}" attached. Add a prompt and send.`)
+      } else if (ALLOWED_FILE_TYPES.includes(extension)) {
         // Add the file to the uploaded context files list
         const newFile: UploadedFile = {
           name: file.name,
@@ -177,9 +177,6 @@ const InputSection = ({ apiConnected }: { apiConnected: boolean }): JSX.Element 
         }
         setUploadedFiles((prev) => [...prev, newFile])
         toast.success(result.message || `File "${file.name}" added to context.`)
-      } else {
-        // Fallback for unexpected response types or mismatch
-        toast.info("File uploaded, but couldn't determine type or type mismatch.")
       }
 
     } catch (error) {

@@ -93,6 +93,7 @@ function createWindow(): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
+    // In production, always load from the local file
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }

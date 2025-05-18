@@ -249,21 +249,23 @@ class OllamaChatbot(BaseChatbot):
         text = ""
         try:
             if file_path.suffix == '.pdf':
-                if pypdf:
-                    reader = pypdf.PdfReader(file_path)
-                    text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
-                else:
-                     app_logger.error("pypdf is not installed. Cannot process PDF files.")
-                     raise ImportError("pypdf is required for PDF processing.")
+                try:
+                    import pypdf
+                except ImportError:
+                    app_logger.error("pypdf is not installed. Cannot process PDF files.")
+                    raise ImportError("pypdf is required for PDF processing. Please install it with 'pip install pypdf'")
+                
+                reader = pypdf.PdfReader(file_path)
+                text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+                if not text.strip():
+                    raise ValueError("No text could be extracted from the PDF file. The file might be empty, corrupted, or contain only images.")
             elif file_path.suffix in ['.txt', '.md']:
                 text = file_path.read_text(encoding='utf-8')
             else:
-                app_logger.warning(f"Unsupported file type: {file_path.suffix}")
-                return # Or raise error
+                raise ValueError(f"Unsupported file type: {file_path.suffix}")
 
             if not text:
-                app_logger.warning(f"No text extracted from file: {file_name}")
-                return
+                raise ValueError(f"No text could be extracted from file: {file_name}")
 
             # Split text into documents
             documents = self.text_splitter.create_documents(
