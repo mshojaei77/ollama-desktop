@@ -2,6 +2,36 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import axios from 'axios'
+
+// Track API server process
+let apiServerProcess: any = null
+
+async function cleanupProcesses() {
+  try {
+    // Send cleanup request to API server
+    await axios.post('http://localhost:8000/cleanup')
+    console.log('Sent cleanup request to API server')
+
+    // Wait a moment for the API server to clean up
+    await new Promise(resolve => setTimeout(resolve, 1000))
+
+    // Try to check if API server is still responding
+    try {
+      await axios.get('http://localhost:8000/')
+    } catch (error) {
+      // If we get an error, it means the server is no longer running (good)
+      console.log('API server successfully terminated')
+      return
+    }
+
+    // If we reach here, server is still running, wait a bit longer
+    await new Promise(resolve => setTimeout(resolve, 2000))
+
+  } catch (error) {
+    console.error('Error sending cleanup request:', error)
+  }
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -51,6 +81,22 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // Handle window close event
+  mainWindow.on('close', async (e) => {
+    if (mainWindow.isClosable()) {
+      e.preventDefault() // Prevent the window from closing immediately
+      
+      try {
+        await cleanupProcesses()
+        console.log('Cleanup completed')
+        app.exit(0) // Exit the app after cleanup
+      } catch (error) {
+        console.error('Error during cleanup:', error)
+        app.exit(1) // Exit with error code
+      }
+    }
+  })
 }
 
 // This method will be called when Electron has finished
@@ -82,7 +128,13 @@ app.whenReady().then(() => {
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
+  try {
+    await cleanupProcesses()
+  } catch (error) {
+    console.error('Error during final cleanup:', error)
+  }
+  
   if (process.platform !== 'darwin') {
     app.quit()
   }

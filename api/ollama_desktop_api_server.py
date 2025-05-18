@@ -46,6 +46,11 @@ from api.scrape_ollama import (
     fetch_embedding_models
 )
 
+# Add these imports at the top with other imports
+import signal
+import psutil
+import subprocess
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI app startup and shutdown events"""
@@ -1221,51 +1226,96 @@ async def pull_model_endpoint(model_name: str, stream: bool = True):
             yield json.dumps(progress_data, default=str) + "\n"
     return StreamingResponse(iter_progress(), media_type="application/x-ndjson")
 
-# ----- Programmatic API Examples -----
+@app.post("/cleanup")
+async def cleanup_endpoint():
+    """Endpoint to handle cleanup requests from the frontend"""
+    try:
+        app_logger.info("Received cleanup request")
+        
+        # Schedule the shutdown after response is sent
+        async def shutdown():
+            await asyncio.sleep(1)  # Give time for response to be sent
+            cleanup_processes()
+            
+        asyncio.create_task(shutdown())
+        return {"status": "success", "message": "Cleanup scheduled"}
+    except Exception as e:
+        app_logger.error(f"Error during cleanup: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error during cleanup: {str(e)}")
 
-async def example_standalone():
-    """Example of using the package with standalone Ollama (no MCP)"""
-    # Create a standalone chatbot
-    chatbot = await OllamaMCPPackage.create_standalone_chatbot(
-        model_name="llama3.2",
-        system_message="You are a helpful assistant who speaks like a pirate.",
-        temperature=0.8
-    )
+# Add this function before the start_server function
+def cleanup_processes():
+    """Clean up all running processes"""
+    try:
+        # Get the current process
+        current_process = psutil.Process()
+        
+        # Get all child processes
+        children = current_process.children(recursive=True)
+        
+        # Terminate frontend process if running
+        for child in children:
+            try:
+                # Check if process is npm/node (frontend)
+                if child.name().lower() in ['npm', 'node', 'npm.cmd', 'node.exe']:
+                    child.terminate()
+                    app_logger.info(f"Terminated process: {child.name()}")
+            except Exception as e:
+                app_logger.error(f"Error terminating process {child.name()}: {str(e)}")
+        
+        # Allow time for graceful termination
+        psutil.wait_procs(children, timeout=3)
+        
+        # Force kill any remaining processes
+        for child in children:
+            try:
+                if child.is_running():
+                    child.kill()
+            except Exception as e:
+                app_logger.error(f"Error killing process: {str(e)}")
+        
+        app_logger.info("All child processes cleaned up")
+
+        # Exit the current process (which will close the terminal)
+        if not getattr(sys, 'frozen', False):  # If running from source (not packaged)
+            current_process.terminate()
+        
+    except Exception as e:
+        app_logger.error(f"Error in cleanup_processes: {str(e)}")
+
+# Add signal handlers
+def signal_handler(signum, frame):
+    """Handle termination signals"""
+    app_logger.info(f"Received signal {signum}")
+    cleanup_processes()
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+if sys.platform.startswith('win'):
+    signal.signal(signal.SIGBREAK, signal_handler)
+
+def start_server():
+    """Start the FastAPI server"""
+    # Ensure Ollama is running
+    if not ensure_ollama_running():
+        app_logger.error("Failed to ensure Ollama is running. Please start Ollama manually.")
+        sys.exit(1)
+        
+    # Start frontend in a separate terminal
+    start_frontend()
     
     try:
-        # Chat with the model
-        response = await chatbot.chat("Tell me about neural networks.")
-        print(f"Chatbot: {response}")
-        
-        # Continue the conversation
-        response = await chatbot.chat("Summarize what you just told me.")
-        print(f"Chatbot: {response}")
-    finally:
-        # Clean up when done
-        await chatbot.cleanup()
-
-async def example_with_mcp():
-    """Example of using the package with MCP tools"""
-    # Create an MCP client
-    client = await OllamaMCPPackage.create_client()
-    
-    try:
-        # Connect to an SSE server
-        await client.connect_to_sse_server("http://localhost:3000/sse")
-        
-        # Process a query
-        response = await client.process_query("What's the weather in Paris?")
-        print(f"Response: {response}")
-    finally:
-        # Clean up when done
-        await client.cleanup()
-
-
-# ----- Main Function -----
-
-import subprocess
-import sys
-import os
+        # Start the API server
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    except KeyboardInterrupt:
+        app_logger.info("Received keyboard interrupt")
+        cleanup_processes()
+    except Exception as e:
+        app_logger.error(f"Error running server: {str(e)}")
+        cleanup_processes()
+        raise
 
 def start_frontend():
     """Start the frontend development server in a separate terminal"""
@@ -1327,19 +1377,6 @@ def ensure_ollama_running():
     except Exception as e:
         app_logger.error(f"Failed to start Ollama: {str(e)}")
         return False
-
-def start_server():
-    """Start the FastAPI server"""
-    # Ensure Ollama is running
-    if not ensure_ollama_running():
-        app_logger.error("Failed to ensure Ollama is running. Please start Ollama manually.")
-        sys.exit(1)
-        
-    # Start frontend in a separate terminal
-    start_frontend()
-    
-    # Start the API server
-    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     # Start the FastAPI server and frontend
