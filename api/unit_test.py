@@ -9,7 +9,7 @@ import os
 # Add the project directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ollama_mcp_api import app, active_clients, active_chatbots
+from api.ollama_desktop_api_server import app, active_clients, active_chatbots
 
 # Create a TestClient for testing the API
 client = TestClient(app)

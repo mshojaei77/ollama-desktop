@@ -42,7 +42,7 @@ get_current_persian_date_tool = {
 
 # Try to import OllamaMCPPackage, but don't fail if it's not available
 try:
-    from ollama_mcp import OllamaMCPPackage, OllamaChatbot # Added OllamaChatbot import
+    from api.ollama_client import OllamaMCPPackage, OllamaChatbot # Added OllamaChatbot import
 except ImportError:
     logger.warning("OllamaMCPPackage not available, will use fallback mode")
     OllamaMCPPackage = None

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Any, Union, AsyncGenerator
 import tempfile
 import shutil
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # Add sys import and path modification
 import sys
@@ -30,7 +31,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.ollama_mcp import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
+from api.ollama_client import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
 from api import db  # Import our new database module
 from api.config_io import read_ollama_config, write_ollama_config
 from api.agents.routes import router as agents_router  # Import the agents router
@@ -45,7 +46,33 @@ from api.scrape_ollama import (
     fetch_embedding_models
 )
 
-# Initialize FastAPI app
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI app startup and shutdown events"""
+    # Startup
+    db.init_db()
+    db.migrate_database()
+    app_logger.info("Database initialized and migrated")
+    
+    # Initialize the agent registry
+    await agent_registry.initialize()
+    app_logger.info(f"Agent registry initialized with {len(agent_registry.get_all_agents())} agents")
+    
+    # Start Ollama on Windows platforms
+    if sys.platform.startswith('win'):
+        try:
+            subprocess.Popen(['powershell', '-Command', 'ollama list'], creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception as e:
+            app_logger.error(f"Failed to start Ollama: {str(e)}")
+    
+    yield
+    
+    # Shutdown
+    app_logger.info("Shutting down application, cleaning up resources...")
+    await agent_registry.cleanup()
+    app_logger.info("Agent registry cleaned up")
+
+# Initialize FastAPI app with lifespan
 app = FastAPI(
     title="Ollama MCP API",
     description="API for interacting with Ollama models and MCP tools",
@@ -53,6 +80,7 @@ app = FastAPI(
     docs_url="/docs",              # Explicitly set Swagger UI endpoint (default)
     redoc_url="/redoc",            # Also enable ReDoc (alternative docs)
     openapi_url="/openapi.json",   # URL for the OpenAPI schema
+    lifespan=lifespan,
     openapi_tags=[
         {
             "name": "Chat",
@@ -207,26 +235,6 @@ async def root():
         "service": "Ollama MCP API",
         "active_sessions": len(active_clients) + len(active_chatbots)
     }
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the database and agents on application startup"""
-    db.init_db()
-    db.migrate_database()
-    app_logger.info("Database initialized and migrated")
-    
-    # Initialize the agent registry
-    await agent_registry.initialize()
-    app_logger.info(f"Agent registry initialized with {len(agent_registry.get_all_agents())} agents")
-    
-    # Start Ollama on Windows platforms
-    import sys
-    import subprocess
-    if sys.platform.startswith('win'):
-        try:
-            subprocess.Popen(['powershell', '-Command', 'ollama list'], creationflags=subprocess.CREATE_NO_WINDOW)
-        except Exception as e:
-            app_logger.error(f"Failed to start Ollama: {str(e)}")
 
 @app.post("/chat/initialize", response_model=InitializeResponse, tags=["Chat"])
 async def initialize_chatbot(request: InitializeRequest):
@@ -1044,15 +1052,6 @@ async def initialize_chat_with_mcp(request: InitializeRequest):
         app_logger.error(f"Error initializing chat with MCP: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on application shutdown"""
-    app_logger.info("Shutting down application, cleaning up resources...")
-    
-    # Clean up agent registry resources
-    await agent_registry.cleanup()
-    app_logger.info("Agent registry cleaned up")
-
 @app.post("/sessions/{session_id}/upload_file", tags=["Context"])
 async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
     """
@@ -1287,10 +1286,58 @@ def start_frontend():
     except Exception as e:
         app_logger.error(f"Failed to start frontend: {str(e)}")
 
+def ensure_ollama_running():
+    """Check if Ollama is running and start it if not"""
+    import subprocess
+    import time
+    import requests
+    
+    def is_ollama_running():
+        try:
+            response = requests.get("http://localhost:11434/api/version")
+            return response.status_code == 200
+        except requests.exceptions.ConnectionError:
+            return False
+    
+    # First check if Ollama is already running
+    if is_ollama_running():
+        app_logger.info("Ollama is already running")
+        return True
+        
+    # If not running, try to start it
+    try:
+        if sys.platform.startswith('win'):
+            # Windows
+            subprocess.Popen(['powershell', '-Command', 'ollama serve'], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            # Linux/MacOS
+            subprocess.Popen(['ollama', 'serve'])
+            
+        # Wait for Ollama to start (max 30 seconds)
+        for _ in range(30):
+            if is_ollama_running():
+                app_logger.info("Successfully started Ollama")
+                return True
+            time.sleep(1)
+            
+        app_logger.error("Timeout waiting for Ollama to start")
+        return False
+        
+    except Exception as e:
+        app_logger.error(f"Failed to start Ollama: {str(e)}")
+        return False
+
 def start_server():
     """Start the FastAPI server"""
+    # Ensure Ollama is running
+    if not ensure_ollama_running():
+        app_logger.error("Failed to ensure Ollama is running. Please start Ollama manually.")
+        sys.exit(1)
+        
     # Start frontend in a separate terminal
     start_frontend()
+    
     # Start the API server
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
