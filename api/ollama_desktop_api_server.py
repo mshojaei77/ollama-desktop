@@ -1320,21 +1320,77 @@ def start_server():
 def start_frontend():
     """Start the frontend development server in a separate terminal"""
     try:
-        frontend_cmd = "cd front && npm run dev"
+        # Get the absolute path to the front directory
+        front_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'front'))
+        
+        # First ensure all dependencies are installed
+        if sys.platform.startswith('win'):
+            npm_cmd = 'npm.cmd'
+        else:
+            npm_cmd = 'npm'
+            
+        # Run npm install first
+        try:
+            subprocess.run(
+                [npm_cmd, 'install'],
+                cwd=front_dir,
+                check=True,
+                capture_output=True
+            )
+            app_logger.info("Frontend dependencies installed")
+        except subprocess.CalledProcessError as e:
+            app_logger.error(f"Failed to install frontend dependencies: {e.stderr.decode()}")
+            raise
+            
+        # Start the development server
+        env = dict(os.environ)
+        env['ELECTRON_START_URL'] = 'http://localhost:5173'  # Default Vite dev server URL
         
         if sys.platform.startswith('win'):
-            # Windows: run without showing command prompt
-            subprocess.Popen(frontend_cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        elif sys.platform.startswith('darwin'):
-            # macOS: run in background
-            subprocess.Popen(['bash', '-c', frontend_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Windows: use npm.cmd and set proper working directory
+            process = subprocess.Popen(
+                [npm_cmd, 'run', 'dev'],
+                cwd=front_dir,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
         else:
-            # Linux: run in background
-            subprocess.Popen(['bash', '-c', frontend_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Unix systems
+            process = subprocess.Popen(
+                [npm_cmd, 'run', 'dev'],
+                cwd=front_dir,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
                 
-        app_logger.info("Started frontend development server in background")
+        app_logger.info("Started frontend development server")
+        
+        # Give the dev server a moment to start
+        time.sleep(2)
+        
+        # Now start Electron
+        if sys.platform.startswith('win'):
+            electron_process = subprocess.Popen(
+                [npm_cmd, 'run', 'start'],
+                cwd=front_dir,
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        else:
+            electron_process = subprocess.Popen(
+                [npm_cmd, 'run', 'start'],
+                cwd=front_dir,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        
+        app_logger.info("Started Electron app")
+        
     except Exception as e:
         app_logger.error(f"Failed to start frontend: {str(e)}")
+        raise
 
 def ensure_ollama_running():
     """Check if Ollama is running and start it if not"""

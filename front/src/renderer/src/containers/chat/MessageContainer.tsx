@@ -7,6 +7,8 @@ import { useChatStore } from '@renderer/store/chatStore'
 import { queryClient, useChatHistory, useSendMessage } from '@renderer/fetch/queries'
 import { useEffect, useRef, useState } from 'react'
 import { copyToClipboard } from '../../utils'
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@renderer/components/ui/collapsible'
+import { Brain } from 'lucide-react'
 
 // Define generic message type and props for external use
 export interface GenericMessage {
@@ -33,6 +35,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
   const selectedModel = useChatStore((state) => state.selectedModel)
   
   const [isStreaming, setIsStreaming] = useState(false)
+  const [openThinkTags, setOpenThinkTags] = useState<Record<string, boolean>>({})
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const lastScrollHeightRef = useRef<number>(0)
@@ -163,6 +166,25 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
   // Use external refresh handler if provided
   const handleRefresh = onRefresh ?? regenerateResponse
 
+  // Function to extract think tag content
+  const extractThinkTagContent = (content: string) => {
+    const thinkMatch = content.match(/<think>(.*?)<\/think>/s)
+    if (!thinkMatch) return { mainContent: content, thinkContent: null }
+    
+    const thinkContent = thinkMatch[1].trim()
+    const mainContent = content.replace(/<think>.*?<\/think>/s, '').trim()
+    
+    return { mainContent, thinkContent }
+  }
+
+  // Function to toggle think tag visibility
+  const toggleThinkTag = (messageId: string) => {
+    setOpenThinkTags(prev => ({
+      ...prev,
+      [messageId]: !prev[messageId]
+    }))
+  }
+
   return (
     <div 
       ref={scrollContainerRef} 
@@ -198,6 +220,8 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
             message.id === messages[messages.length - 1]?.id &&
             (propIsStreaming !== undefined ? propIsStreaming : isStreaming);
 
+          const { mainContent, thinkContent } = extractThinkTagContent(message.content || '')
+
           return (
             <div
               key={message.id}
@@ -220,6 +244,28 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
                 </div>
               )}
               <div className="flex flex-col max-w-[80%]">
+                {thinkContent && (
+                  <Collapsible
+                    open={openThinkTags[message.id]}
+                    onOpenChange={() => toggleThinkTag(message.id)}
+                    className="mb-2"
+                  >
+                    <CollapsibleTrigger className="flex items-center gap-2 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]">
+                      <Brain className="h-4 w-4" />
+                      <span>Thinking process</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="bg-[hsl(var(--secondary))] rounded-md mt-2">
+                      <div className="markdown-content">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          rehypePlugins={[rehypeHighlight]}
+                        >
+                          {thinkContent}
+                        </ReactMarkdown>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
                 <div
                   className={`rounded-2xl p-3 ${ 
                     message.role === 'user'
@@ -278,7 +324,7 @@ const MessageContainer = ({ messages: propMessages, isStreaming: propIsStreaming
                           )
                         }}
                       >
-                        {message.content || ""}
+                        {mainContent}
                       </ReactMarkdown>
                     </div>
                   )}

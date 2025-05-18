@@ -4,9 +4,6 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import axios from 'axios'
 
-// Track API server process
-let apiServerProcess: any = null
-
 async function cleanupProcesses() {
   try {
     // Send cleanup request to API server
@@ -50,6 +47,23 @@ function createWindow(): void {
       allowRunningInsecureContent: false
     }
   })
+
+  // Handle window close event
+  mainWindow.on('close', async (e) => {
+    if (mainWindow.isClosable()) {
+      e.preventDefault() // Prevent the window from closing immediately
+      
+      try {
+        await cleanupProcesses()
+        console.log('Cleanup completed')
+        app.exit(0) // Exit the app after cleanup
+      } catch (error) {
+        console.error('Error during cleanup:', error)
+        app.exit(1) // Exit with error code
+      }
+    }
+  })
+
   // Only open DevTools in development mode
   if (is.dev) {
     mainWindow.webContents.openDevTools()
@@ -81,22 +95,6 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
-
-  // Handle window close event
-  mainWindow.on('close', async (e) => {
-    if (mainWindow.isClosable()) {
-      e.preventDefault() // Prevent the window from closing immediately
-      
-      try {
-        await cleanupProcesses()
-        console.log('Cleanup completed')
-        app.exit(0) // Exit the app after cleanup
-      } catch (error) {
-        console.error('Error during cleanup:', error)
-        app.exit(1) // Exit with error code
-      }
-    }
-  })
 }
 
 // This method will be called when Electron has finished
@@ -112,9 +110,6 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
-
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
 
   createWindow()
 

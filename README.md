@@ -13,7 +13,7 @@ A powerful desktop application for interacting with local AI models through Olla
 - **Multi-Model Support**: Seamlessly switch between different Ollama-compatible models
 - **Vision Model Integration**: Process and analyze images directly within conversations
 - **Context-Aware Conversations**: Upload and process documents (.txt, .md, .pdf) for enhanced contextual understanding
-![image](https://github.com/user-attachments/assets/1fdbbcf7-c11d-490e-b022-47e63250d6cd)
+  ![image](https://github.com/user-attachments/assets/1fdbbcf7-c11d-490e-b022-47e63250d6cd)
 
 ### Unique Technical Features
 
@@ -21,7 +21,7 @@ A powerful desktop application for interacting with local AI models through Olla
 - **Specialized AI Agents**: Purpose-built agents for specific tasks and domains
 - **Smart Session Management**: Persistent chat history with advanced search and filtering
 - **Automated Model Discovery**: Automatically fetch and categorize new models from ollama.com
-![image](https://github.com/user-attachments/assets/80c4b829-8a35-4d13-945c-c0f53d182f95)
+  ![image](https://github.com/user-attachments/assets/80c4b829-8a35-4d13-945c-c0f53d182f95)
 
 ### Enterprise-Ready Architecture
 
@@ -37,14 +37,9 @@ A powerful desktop application for interacting with local AI models through Olla
 - **Content Creators**: Generate and refine content with specialized agents
 - **Enterprise Users**: Secure, local AI processing with audit capabilities
 
-## Quick Start
+---
 
-1. Install [Ollama](https://ollama.com/)
-2. Download Ollama Desktop from our releases page
-3. Launch the application
-
-
-- [License](LICENSE) - Apache License 2.0
+> **Note:** Ollama Desktop is still under active development and has not been officially released yet. Features and documentation are subject to change as the project evolves.
 
 ---
 
