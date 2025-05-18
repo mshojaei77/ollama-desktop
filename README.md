@@ -3,6 +3,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 A powerful desktop application for interacting with local AI models through Ollama, featuring advanced capabilities and a modern interface.
+![image](https://github.com/user-attachments/assets/4789b0fa-bcdc-4afd-a5d4-ddf2d0d88082)
 
 ## Key Differentiators
 
@@ -12,6 +13,7 @@ A powerful desktop application for interacting with local AI models through Olla
 - **Multi-Model Support**: Seamlessly switch between different Ollama-compatible models
 - **Vision Model Integration**: Process and analyze images directly within conversations
 - **Context-Aware Conversations**: Upload and process documents (.txt, .md, .pdf) for enhanced contextual understanding
+![image](https://github.com/user-attachments/assets/1fdbbcf7-c11d-490e-b022-47e63250d6cd)
 
 ### Unique Technical Features
 
@@ -19,6 +21,7 @@ A powerful desktop application for interacting with local AI models through Olla
 - **Specialized AI Agents**: Purpose-built agents for specific tasks and domains
 - **Smart Session Management**: Persistent chat history with advanced search and filtering
 - **Automated Model Discovery**: Automatically fetch and categorize new models from ollama.com
+![image](https://github.com/user-attachments/assets/80c4b829-8a35-4d13-945c-c0f53d182f95)
 
 ### Enterprise-Ready Architecture
 
