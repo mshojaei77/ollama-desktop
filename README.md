@@ -1,25 +1,47 @@
-# Ollama Desktop 
+# Ollama Desktop
 
-## Overview
-Ollama Desktop is a simple, user-friendly application that lets you chat with AI models right from your desktop. No need for complex setups or expensive api keys - just install and start chatting!
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-![image](https://github.com/user-attachments/assets/5b8b4714-f123-409e-b4cb-593d87eac2f2)
+A powerful desktop application for interacting with local AI models through Ollama, featuring advanced capabilities and a modern interface.
 
-## What It Does
-This application provides an easy way to have conversations with AI models powered by Ollama. Whether you're looking for information, creative writing help, or just someone to chat with, Ollama Desktop Chat makes interacting with AI simple and convenient.
+## Key Differentiators
 
-## Features
+### Advanced Model Integration
+- **Real-time Streaming Responses**: Experience fluid, token-by-token interactions with AI models
+- **Multi-Model Support**: Seamlessly switch between different Ollama-compatible models
+- **Vision Model Integration**: Process and analyze images directly within conversations
+- **Context-Aware Conversations**: Upload and process documents (.txt, .md, .pdf) for enhanced contextual understanding
 
-### Simple Chat Interface
-- Easy-to-use chat window
-- Send messages and receive AI responses instantly
-- Supports multiple AI models
+### Unique Technical Features
+- **Model Context Protocol (MCP)**: Extend AI capabilities through external tools and integrations
+- **Specialized AI Agents**: Purpose-built agents for specific tasks and domains
+- **Smart Session Management**: Persistent chat history with advanced search and filtering
+- **Automated Model Discovery**: Automatically fetch and categorize new models from ollama.com
 
-### MCP Servers
-- Access to tools that help the AI provide better answers
-- Weather information, web searches, and more
-- Toggle between using tools or direct AI responses
+### Enterprise-Ready Architecture
+- **Local-First Design**: All processing happens on your machine for maximum privacy
+- **Persistent Storage**: SQLite database for reliable chat history and session management
+- **Extensible Backend**: FastAPI-powered backend with comprehensive API documentation
+- **Modern Frontend**: React-based UI with real-time updates and theme support
+
+## Target Users
+
+- **Developers**: Integrate AI assistance into your development workflow
+- **Researchers**: Analyze documents and data with AI support
+- **Content Creators**: Generate and refine content with specialized agents
+- **Enterprise Users**: Secure, local AI processing with audit capabilities
+
+## Quick Start
+
+1. Install [Ollama](https://ollama.com/)
+2. Download Ollama Desktop from our releases page
+3. Launch the application
+
+## Documentation
+
+- [Contributing Guide](CONTRIBUTING.md) - Development setup and guidelines
+- [License](LICENSE) - Apache License 2.0
 
 ---
 
-Ollama Desktop Chat makes AI accessible to everyone, regardless of technical expertise. Enjoy conversations with state-of-the-art AI models in a simple, desktop application.
+*Built by the Ollama Desktop Team*
