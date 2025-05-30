@@ -99,9 +99,7 @@ async def chat_message_stream(request: ChatRequest):
     
     async def generate_stream() -> AsyncGenerator[str, None]:
         """Generate streaming response using MCP tools when available"""
-        try:
-            print('! in generate_stream')
-            
+        try:            
             # Save user message to history
             await db.add_chat_message(request.session_id, "user", request.message)
             
@@ -118,7 +116,7 @@ async def chat_message_stream(request: ChatRequest):
                 app_logger.info(f"Using chatbot for session {request.session_id}")
                 
                 # Process query with MCP tools and stream the response
-                async for chunk in chatbot.chat_stream(request.message):
+                async for chunk in chatbot.chat(request.message):
                     if chunk is None:
                         break
                         

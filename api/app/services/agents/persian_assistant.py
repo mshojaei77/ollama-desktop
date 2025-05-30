@@ -183,7 +183,7 @@ class PersianAssistant(BaseAgent):
                 return
 
             # Stream the response from the Ollama chatbot, passing tools and functions
-            async for chunk in self.chatbot.chat_stream(
+            async for chunk in self.chatbot.chat(
                 message=message,
                 tools=tools,
                 available_functions=available_functions
