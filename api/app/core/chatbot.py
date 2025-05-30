@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+from app.core.mcp import MCPManager
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -132,7 +133,10 @@ class Chatbot():
         )
         self._temp_dir_for_vs = None # To hold temp directory object
         self.tools = []
+        self.available_tools = []
         self.tool_enabled = False
+        self.mcp_manager = MCPManager()
+        self.session: Optional[ClientSession] = None
         # Added vector store attribute
         self.vector_store: Optional[FAISS] = None
         self.vector_store_path: Optional[Path] = None # Store path for persistence if needed
@@ -242,6 +246,47 @@ class Chatbot():
             # Note: The API layer should handle cleanup of the originally uploaded temp file
             raise # Re-raise the exception to be caught by the API layer
 
+    async def _system_message(self):
+        """Update the chatbot's system message with the list of available tools."""
+        tools = self.mcp_manager.get_mcp_servers()
+        print("!!! tools::", tools, type(tools))
+        if not tools:
+            return
+
+        mcp_servers_str = ", ".join(tools.keys())
+        print("!!! mcp_servers_str::", mcp_servers_str)
+        
+        # Initialize chatbot with a placeholder system message
+        # We'll update this after connecting to the server
+        placeholder_system_message = (
+            "You are an assistant with access to tools. When a user requests an action, "
+            "respond with a JSON tool call in this format: "
+            "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
+            f"Available tools: {mcp_servers_str}. "
+            "For other queries, provide a direct answer in natural language."
+        )
+        
+        try:
+            system_message = (
+                "You are an assistant with access to tools. For queries requiring a tool, "
+                "indicate which tool you will use in natural language, e.g., 'I will use the <tool_name> tool.' "
+                f"Available tools: {mcp_servers_str}. "
+                "For other queries, provide a direct answer in natural language."
+            )
+            self.memory.chat_memory.messages = [
+                msg for msg in self.memory.chat_memory.messages 
+                if not isinstance(msg, SystemMessage)
+            ]
+            self.memory.chat_memory.add_message(SystemMessage(content=system_message))
+            app_logger.info(f"Updated system message with tools: {mcp_servers_str}")
+
+            # Bind LangChain tools to the chatbot
+            langchain_tools = await self._create_langchain_tools(tools)
+            print("!!! langchain_tools::", langchain_tools)
+            self.bind_tools(langchain_tools)
+        except Exception as e:
+            app_logger.error(f"Failed to update system message with tools: {str(e)}")
+
     async def _get_context_from_query(self, query: str, k: int = 3) -> str:
         """Retrieve relevant context from the vector store"""
         if not self.vector_store:
@@ -264,6 +309,19 @@ class Chatbot():
         except Exception as e:
             app_logger.error(f"Error during similarity search: {str(e)}")
             return ""
+    
+    async def init_message(self, message: str):
+        """
+        Initialize the message with the system message and context
+        """
+        context = ""
+
+        if self.vector_store:
+            context = await self._get_context_from_query(message)
+
+        await self._system_message()
+
+        return context
 
     async def chat(
         self,
@@ -290,8 +348,14 @@ class Chatbot():
             yield f"data: {json.dumps({'type': 'error', 'response': 'Chatbot is not ready. Please check the logs and try again.'})}\n\n"
             return
 
+        print("!!! message::", message)
         # 1. Get relevant context if vector store exists
-        context = await self._get_context_from_query(message)
+        context = await self.init_message(message)
+        if context:
+            self.memory.chat_memory.add_message(SystemMessage(content=context))
+
+        print("!!! context::", context)
+        print("!!! self.memory::", self.memory)
 
         # Add user message to memory first
         self.memory.chat_memory.add_message(HumanMessage(content=message))
@@ -645,6 +709,38 @@ class Chatbot():
             # For other errors, log the full error
             app_logger.error(f"Error in process_direct_query: {error_msg}")
             return f"An error occurred: {error_msg}"
+    
+    async def _create_langchain_tools(self, tools: List[Any]) -> List[Tool]:
+        """Create LangChain Tool objects from MCP tools."""
+        if not tools:
+            return []
+        
+        try:
+            langchain_tools = []
+            print("!!! tools::", tools, type(tools))
+            for tool_name, mcp_tool in tools.items():
+                # Define a simple schema for tool arguments (adjust based on tool requirements)
+                class ToolArgs(BaseModel):
+                    args: Dict[str, Any] = Field(description="Arguments for the tool")
+
+                
+                async def tool_func(args: Dict[str, Any], tool_name=tool_name):
+                    """Execute the MCP tool with the given arguments."""
+                    result = await self.session.call_tool(tool_name, args)
+                    return str(getattr(result, 'content', result))
+                
+                tool = Tool.from_function(
+                    func=None,
+                    coroutine=tool_func,
+                    name=tool_name,
+                    description=f"MCP tool: {tool_name}",
+                    args_schema=ToolArgs,
+                )
+                langchain_tools.append(tool)
+            return langchain_tools
+        except Exception as e:
+            app_logger.error(f"Error creating LangChain tools: {str(e)}")
+            return []
 
 
 class MCPClient:
@@ -1200,47 +1296,6 @@ class OllamaMCPPackage:
                 return {}
             # Re-raise other exceptions to be caught by the API endpoint handler
             raise e
-
-    @staticmethod
-    async def load_mcp_config() -> Dict[str, Any]:
-        """
-        Load MCP server configuration
-
-        Returns:
-            Dict[str, Any]: Configuration dictionary with server information
-        """
-        try:
-            from app.core.config import read_ollama_config
-            config = read_ollama_config()
-            if not config or not isinstance(config, dict):
-                app_logger.warning("Invalid or missing config, initializing with default.")
-                return {"mcpServers": {}}
-            if "mcpServers" not in config:
-                config["mcpServers"] = {}
-            return config
-        except Exception as e:
-            app_logger.error(f"Error loading MCP config: {str(e)}")
-            return {"mcpServers": {}}
-
-    @staticmethod
-    async def get_mcp_server_config(server_name):
-        """Get MCP server configuration by name"""
-        if not server_name:
-            return None
-
-        try:
-            config = await read_ollama_config()
-            if not config or "mcpServers" not in config:
-                app_logger.warning("MCP servers configuration not found or empty.")
-                return None
-
-            server_conf = config["mcpServers"].get(server_name)
-            if not server_conf:
-                app_logger.warning(f"Configuration for MCP server '{server_name}' not found.")
-            return server_conf
-        except Exception as e:
-            app_logger.error(f"Error getting MCP server config for '{server_name}': {str(e)}")
-            return None
 
     @staticmethod
     def pull_model(model_name: str, stream: bool = True) -> Any:
