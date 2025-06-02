@@ -247,32 +247,39 @@ class Chatbot():
             raise # Re-raise the exception to be caught by the API layer
 
     async def _system_message(self):
-        """Update the chatbot's system message with the list of available tools."""
-        tools = self.mcp_manager.get_mcp_servers()
-        print("!!! tools::", tools, type(tools))
-        if not tools:
-            return
+        """
+        Update the chatbot's system message with available tools and clear instructions for use.
 
-        mcp_servers_str = ", ".join(tools.keys())
-        print("!!! mcp_servers_str::", mcp_servers_str)
-        
-        # Initialize chatbot with a placeholder system message
-        # We'll update this after connecting to the server
-        placeholder_system_message = (
-            "You are an assistant with access to tools. When a user requests an action, "
-            "respond with a JSON tool call in this format: "
-            "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
-            f"Available tools: {mcp_servers_str}. "
-            "For other queries, provide a direct answer in natural language."
-        )
-        
+        Ensures the system message guides the model to:
+        - Answer directly for informational queries.
+        - Use tools for action-oriented queries with a clear JSON tool call format.
+        - Indicate tool usage in natural language before returning the tool call.
+        """
         try:
-            system_message = (
-                "You are an assistant with access to tools. For queries requiring a tool, "
-                "indicate which tool you will use in natural language, e.g., 'I will use the <tool_name> tool.' "
+            # Get available tools
+            tools = self.mcp_manager.get_mcp_servers()
+            app_logger.debug(f"Retrieved tools: {tools}")
+
+            # Prepare tool list string or fallback
+            mcp_servers_str = ", ".join(tools.keys()) if tools else "none"
+            tool_instruction = (
                 f"Available tools: {mcp_servers_str}. "
-                "For other queries, provide a direct answer in natural language."
+                "For queries requiring a tool, first state in natural language: "
+                "'I will use the <tool_name> tool to handle this request.' "
+                "Then, return a JSON tool call in this format: "
+                "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
+                "For informational or conversational queries, provide a direct answer in natural language."
             )
+            print("! tool_instruction::", tool_instruction)
+
+            # Define system message
+            system_message = (
+                "You are a helpful assistant with access to tools. "
+                "Your role is to answer user questions accurately and perform actions when requested. "
+                f"{tool_instruction}"
+            )
+
+            # Clear existing system messages and update with new one
             self.memory.chat_memory.messages = [
                 msg for msg in self.memory.chat_memory.messages 
                 if not isinstance(msg, SystemMessage)
@@ -280,12 +287,27 @@ class Chatbot():
             self.memory.chat_memory.add_message(SystemMessage(content=system_message))
             app_logger.info(f"Updated system message with tools: {mcp_servers_str}")
 
-            # Bind LangChain tools to the chatbot
-            langchain_tools = await self._create_langchain_tools(tools)
-            print("!!! langchain_tools::", langchain_tools)
-            self.bind_tools(langchain_tools)
+            # Bind LangChain tools if available
+            if tools:
+                langchain_tools = await self._create_langchain_tools(tools)
+                app_logger.debug(f"Binding LangChain tools: {[tool.name for tool in langchain_tools]}")
+                self.bind_tools(langchain_tools)
+            else:
+                app_logger.info("No tools available, skipping tool binding")
+
         except Exception as e:
-            app_logger.error(f"Failed to update system message with tools: {str(e)}")
+            app_logger.error(f"Failed to update system message: {str(e)}")
+            # Set a fallback system message to ensure functionality
+            fallback_message = (
+                "You are a helpful assistant. Answer user questions accurately in natural language. "
+                "No tools are currently available due to an initialization error."
+            )
+            self.memory.chat_memory.messages = [
+                msg for msg in self.memory.chat_memory.messages 
+                if not isinstance(msg, SystemMessage)
+            ]
+            self.memory.chat_memory.add_message(SystemMessage(content=fallback_message))
+            app_logger.info("Set fallback system message due to error")
 
     async def _get_context_from_query(self, query: str, k: int = 3) -> str:
         """Retrieve relevant context from the vector store"""
@@ -314,237 +336,87 @@ class Chatbot():
         """
         Initialize the message with the system message and context
         """
-        context = ""
-
-        if self.vector_store:
-            context = await self._get_context_from_query(message)
-
+        context = await self._get_context_from_query(message) if self.vector_store else ""
         await self._system_message()
-
         return context
+    
+    async def get_available_tools(self):
+        """Get the available tools"""
+        return self.mcp_manager.get_mcp_servers()
 
-    async def chat(
-        self,
-        message: str,
-        tools: Optional[List[Any]] = None,
-        available_functions: Optional[Dict[str, Callable]] = None
-    ) -> AsyncGenerator[str, None]:
+    async def chat(self, message: str) -> AsyncGenerator[str, None]:
         """
         Process a chat message using the Ollama model with RAG and stream the response.
-        Supports tool calls and context from uploaded documents.
+        Focuses on direct chat functionality with context from uploaded documents.
 
         Args:
             message: The user's message.
-            tools: Optional list of tool definitions for the Ollama API.
-            available_functions: Optional dictionary mapping tool names to callable functions.
 
         Yields:
             Response chunks as they arrive from the model.
         """
         if not self.ready:
             await self.initialize()
-
-        if not self.ready:
-            yield f"data: {json.dumps({'type': 'error', 'response': 'Chatbot is not ready. Please check the logs and try again.'})}\n\n"
-            return
+            if not self.ready:
+                yield f"data: {json.dumps({'type': 'error', 'response': 'Chatbot is not ready. Please check the logs and try again.'})}\n\n"
+                return
 
         print("!!! message::", message)
-        # 1. Get relevant context if vector store exists
         context = await self.init_message(message)
         if context:
             self.memory.chat_memory.add_message(SystemMessage(content=context))
 
         print("!!! context::", context)
         print("!!! self.memory::", self.memory)
-
-        # Add user message to memory first
         self.memory.chat_memory.add_message(HumanMessage(content=message))
 
         try:
-            # If tools are provided, use the original LangChain-based approach for tool handling
-            if tools and available_functions:
-                # Get current chat history (excluding system message for LLM call preparation)
-                history = self.get_history()
-                messages_for_llm = [msg for msg in history if not isinstance(msg, SystemMessage)]
+            messages = ([{"role": "system", "content": self.system_message}] if self.system_message else [])
+            history = self.get_history()
+            messages.extend({"role": "user" if isinstance(m, HumanMessage) else "assistant", "content": m.content} for m in history)
+            human_msg_content = f"{message}{context}" if context else message
+            messages.append({"role": "user", "content": human_msg_content})
 
-                # Prepare the initial HumanMessage with context
-                human_message_content = f"{message}{context}" if context else message
-                human_message = HumanMessage(content=human_message_content)
-                messages_for_llm.append(human_message)
+            app_logger.info(f"Streaming chat with {len(messages)} messages")
+            app_logger.debug(f"Messages: {messages}")
 
-                # --- Initial LLM Call (potentially with tools) ---
-                app_logger.debug(f"Invoking LLM (initial call) with {len(messages_for_llm)} messages.")
-                app_logger.debug(f"Providing tools: {[t.get('function', {}).get('name') for t in tools if isinstance(t, dict)]}")
-                
-                # Bind tools to the chat model for this call
-                llm_with_tools = self.chat_model.bind_tools(tools)
-                ai_response: BaseMessage = await asyncio.to_thread(
-                    llm_with_tools.invoke, messages_for_llm
+            try:
+                import ollama
+                async_client = ollama.AsyncClient(host=self.base_url)
+                app_logger.info(f"Using Ollama Python client to stream response")
+                stream = await async_client.chat(
+                    model=self.model_name, messages=messages, stream=True,
+                    options={"temperature": self.temperature, "top_p": self.top_p}
                 )
-
-                # Add the initial AI response to memory
-                self.memory.chat_memory.add_message(ai_response)
-
-                # --- Tool Call Handling ---
-                tool_calls = ai_response.tool_calls if hasattr(ai_response, 'tool_calls') else []
-                
-                if tool_calls:
-                    app_logger.info(f"Detected {len(tool_calls)} tool call(s): {[tc.get('name') for tc in tool_calls]}")
-
-                    # Prepare messages for the final LLM call
-                    messages_for_final_call = self.get_history()
-
-                    for tool_call in tool_calls:
-                        tool_name = tool_call.get("name")
-                        tool_args = tool_call.get("args", {})
-                        tool_id = tool_call.get("id")
-
-                        if not tool_id:
-                            app_logger.error(f"Tool call '{tool_name}' missing 'id'. Cannot process.")
-                            continue
-
-                        if function_to_call := available_functions.get(tool_name):
-                            app_logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
-                            try:
-                                tool_output = await asyncio.to_thread(function_to_call, **tool_args)
-                                tool_output_str = str(tool_output)
-                                app_logger.info(f"Tool '{tool_name}' output: {tool_output_str[:100]}...")
-                            except Exception as e:
-                                error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                                app_logger.error(error_msg)
-                                tool_output_str = error_msg
-
-                            # Create ToolMessage with the output and tool_call_id
-                            tool_message = ToolMessage(content=tool_output_str, tool_call_id=tool_id)
-                            messages_for_final_call.append(tool_message)
-                            self.memory.chat_memory.add_message(tool_message)
-                        else:
-                            app_logger.warning(f"Tool function '{tool_name}' not found in available_functions.")
-                            tool_message = ToolMessage(
-                                content=f"Error: Tool '{tool_name}' is not available.",
-                                tool_call_id=tool_id
-                            )
-                            messages_for_final_call.append(tool_message)
-                            self.memory.chat_memory.add_message(tool_message)
-
-                    # --- Final LLM Call (with tool results) - Stream this response ---
-                    app_logger.debug(f"Invoking LLM (final call) with {len(messages_for_final_call)} messages (including tool results).")
-                    
-                    # Stream the final response
-                    stream_gen = await asyncio.to_thread(
-                        lambda: self.chat_model.stream(messages_for_final_call)
-                    )
-
-                    full_response = ""
-                    async for chunk in self._aiter_from_sync_iter(stream_gen):
-                        chunk_content = getattr(chunk, 'content', None)
-                        if chunk_content:
-                            full_response += chunk_content
-                            yield f"data: {json.dumps({'type': 'token', 'response': chunk_content})}\n\n"
-
-                    # Add final AI response to memory
-                    if full_response:
-                        self.memory.chat_memory.add_message(AIMessage(content=full_response))
-
-                else:
-                    # No tool calls, stream the initial response
-                    if ai_response.content:
-                        yield f"data: {json.dumps({'type': 'token', 'response': ai_response.content})}\n\n"
-
-            else:
-                # No tools, use direct Ollama streaming approach
-                # Format the messages for Ollama API
-                messages = []
-                
-                # Add system message if it exists
-                if self.system_message:
-                    messages.append({"role": "system", "content": self.system_message})
-                
-                # Add chat history
-                history = self.get_history()
-                for msg in history:
-                    if isinstance(msg, HumanMessage):
-                        messages.append({"role": "user", "content": msg.content})
-                    elif isinstance(msg, AIMessage):
-                        messages.append({"role": "assistant", "content": msg.content})
-                
-                # Add the current message with context
-                human_message_content = f"{message}{context}" if context else message
-                messages.append({"role": "user", "content": human_message_content})
-                
-                app_logger.info(f"Streaming chat with {len(messages)} messages")
-                app_logger.debug(f"Messages: {messages}")
-                
-                # Try Ollama Python client first
-                try:
-                    import ollama
-                    async_client = ollama.AsyncClient(host=self.base_url)
-                    
-                    app_logger.info(f"Using Ollama Python client to stream response")
-                    stream = await async_client.chat(
-                        model=self.model_name,
-                        messages=messages,
-                        stream=True,
-                        options={
-                            "temperature": self.temperature,
-                            "top_p": self.top_p
-                        }
-                    )
-                    
-                    full_response = ""
-                    async for chunk in stream:
-                        if not chunk:
-                            continue
-                            
-                        app_logger.debug(f"Received chunk: {chunk}")
-                        
-                        # Extract content from the message
-                        if 'message' in chunk and 'content' in chunk['message']:
-                            content = chunk['message']['content']
-                            if content:
-                                full_response += content
-                                yield f"data: {json.dumps({'type': 'token', 'response': content})}\n\n"
-                                
-                except ImportError:
-                    # Fallback to LangChain implementation if ollama client not available
-                    app_logger.warning("Ollama Python client not available, using LangChain fallback")
-                    
-                    # Convert to LangChain format
-                    lc_messages = []
-                    for msg in messages:
-                        if msg["role"] == "system":
-                            lc_messages.append(SystemMessage(content=msg["content"]))
-                        elif msg["role"] == "user":
-                            lc_messages.append(HumanMessage(content=msg["content"]))
-                        elif msg["role"] == "assistant":
-                            lc_messages.append(AIMessage(content=msg["content"]))
-                    
-                    # Stream using LangChain
-                    stream_gen = await asyncio.to_thread(
-                        lambda: self.chat_model.stream(lc_messages)
-                    )
-
-                    full_response = ""
-                    async for chunk in self._aiter_from_sync_iter(stream_gen):
-                        chunk_content = getattr(chunk, 'content', None)
-                        if chunk_content:
-                            full_response += chunk_content
-                            yield f"data: {json.dumps({'type': 'token', 'response': chunk_content})}\n\n"
-                        elif isinstance(chunk, dict) and 'content' in chunk:
-                            content = chunk['content']
+                full_response = ""
+                async for chunk in stream:
+                    if not chunk:
+                        continue
+                    app_logger.debug(f"Received chunk: {chunk}")
+                    if 'message' in chunk and 'content' in chunk['message']:
+                        content = chunk['message']['content']
+                        if content:
                             full_response += content
                             yield f"data: {json.dumps({'type': 'token', 'response': content})}\n\n"
-                        elif isinstance(chunk, str):
-                            full_response += chunk
-                            yield f"data: {json.dumps({'type': 'token', 'response': chunk})}\n\n"
-                
-                # Add the complete response to memory
-                if full_response:
-                    app_logger.info(f"Streamed complete response (first 100 chars): {full_response[:100]}")
-                    self.memory.chat_memory.add_message(AIMessage(content=full_response))
-                else:
-                    app_logger.warning("No response content received from stream")
+            except ImportError:
+                app_logger.warning("Ollama Python client not available, using LangChain fallback")
+                lc_msgs = []
+                for m in messages:
+                    role, content = m["role"], m["content"]
+                    lc_msgs.append(SystemMessage(content=content) if role == "system" else HumanMessage(content=content) if role == "user" else AIMessage(content=content))
+                stream_gen = await asyncio.to_thread(lambda: self.chat_model.stream(lc_msgs))
+                full_response = ""
+                async for chunk in self._aiter_from_sync_iter(stream_gen):
+                    content = getattr(chunk, 'content', None) or (chunk.get('content') if isinstance(chunk, dict) else chunk if isinstance(chunk, str) else None)
+                    if content:
+                        full_response += content
+                        yield f"data: {json.dumps({'type': 'token', 'response': content})}\n\n"
 
+            if full_response:
+                app_logger.info(f"Streamed complete response (first 100 chars): {full_response[:100]}")
+                self.memory.chat_memory.add_message(AIMessage(content=full_response))
+            else:
+                app_logger.warning("No response content received from stream")
         except Exception as e:
             error_msg = f"Error processing message: {str(e)}"
             app_logger.error(error_msg, exc_info=True)
@@ -583,8 +455,7 @@ class Chatbot():
                  self._temp_dir_for_vs = None
                  self.vector_store_path = None # Path becomes invalid after cleanup
 
-        # Call superclass cleanup which handles memory and resets vector_store attribute
-        await super().cleanup()
+        # Reset chatbot attributes
         self.chat_model = None
         self.ready = False
         # Ensure vector_store is None after cleanup
@@ -1174,6 +1045,38 @@ class OllamaMCPPackage:
             MCPClient: Initialized client
         """
         return MCPClient(model_name=model_name)
+
+    @staticmethod
+    async def load_mcp_config() -> Optional[Dict[str, Any]]:
+        """
+        Load MCP configuration from the ollama_desktop_config.json file
+        
+        Returns:
+            dict: The configuration data or None if error
+        """
+        try:
+            return await asyncio.to_thread(read_ollama_config)
+        except Exception as e:
+            app_logger.error(f"Error loading MCP config: {str(e)}")
+            return None
+
+    @staticmethod
+    async def write_ollama_config(config_data: Dict[str, Any]) -> bool:
+        """
+        Write configuration data to the ollama_desktop_config.json file
+        
+        Args:
+            config_data: The configuration data to write
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            from app.core.config import write_ollama_config
+            return await asyncio.to_thread(write_ollama_config, config_data)
+        except Exception as e:
+            app_logger.error(f"Error writing Ollama config: {str(e)}")
+            return False
 
     @staticmethod
     async def create_standalone_chatbot(
