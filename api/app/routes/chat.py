@@ -121,7 +121,6 @@ async def chat_message_stream(request: ChatRequest):
                         break
                         
                     try:
-                        print("! chunk", chunk)
                         chunk_data = json.loads(chunk.replace('data: ', ''))
                     except json.JSONDecodeError as e:
                         app_logger.error(f"JSON decode error: {str(e)}. Chunk: {chunk}")

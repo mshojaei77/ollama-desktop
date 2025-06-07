@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from app.core.mcp import MCPManager
+from app.core.mcp.servers import MCPServersConfig
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -68,6 +68,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.docstore.document import Document
+
+from app.core.mcp.manager import MCPClientManager
 
 # Added import for PDF processing
 try:
@@ -133,9 +135,7 @@ class Chatbot():
         )
         self._temp_dir_for_vs = None # To hold temp directory object
         self.tools = []
-        self.available_tools = []
         self.tool_enabled = False
-        self.mcp_manager = MCPManager()
         self.session: Optional[ClientSession] = None
         # Added vector store attribute
         self.vector_store: Optional[FAISS] = None
@@ -256,27 +256,16 @@ class Chatbot():
         - Indicate tool usage in natural language before returning the tool call.
         """
         try:
-            # Get available tools
-            tools = self.mcp_manager.get_mcp_servers()
-            app_logger.debug(f"Retrieved tools: {tools}")
-
-            # Prepare tool list string or fallback
-            mcp_servers_str = ", ".join(tools.keys()) if tools else "none"
-            tool_instruction = (
-                f"Available tools: {mcp_servers_str}. "
-                "For queries requiring a tool, first state in natural language: "
-                "'I will use the <tool_name> tool to handle this request.' "
-                "Then, return a JSON tool call in this format: "
-                "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
-                "For informational or conversational queries, provide a direct answer in natural language."
-            )
-            print("! tool_instruction::", tool_instruction)
-
+            # Get formatted tool descriptions
+            mcp_manager = MCPClientManager()
+            tool_instruction = await mcp_manager.get_all_formatted_tools()
+            
             # Define system message
             system_message = (
-                "You are a helpful assistant with access to tools. "
-                "Your role is to answer user questions accurately and perform actions when requested. "
-                f"{tool_instruction}"
+                "You are a helpful AI assistant with access to specialized tools. "
+                "Your role is to understand user requests and either provide direct answers or use appropriate tools to fulfill their needs. "
+                "Be precise with tool usage and always explain your actions clearly."
+                f"\n{tool_instruction}"
             )
 
             # Clear existing system messages and update with new one
@@ -285,15 +274,16 @@ class Chatbot():
                 if not isinstance(msg, SystemMessage)
             ]
             self.memory.chat_memory.add_message(SystemMessage(content=system_message))
-            app_logger.info(f"Updated system message with tools: {mcp_servers_str}")
+            # Update the instance attribute to keep it in sync
+            self.system_message = system_message
 
-            # Bind LangChain tools if available
-            if tools:
-                langchain_tools = await self._create_langchain_tools(tools)
-                app_logger.debug(f"Binding LangChain tools: {[tool.name for tool in langchain_tools]}")
-                self.bind_tools(langchain_tools)
-            else:
-                app_logger.info("No tools available, skipping tool binding")
+            # # Bind LangChain tools if available
+            # if tools:
+            #     langchain_tools = await self._create_langchain_tools(tools)
+            #     app_logger.debug(f"Binding LangChain tools: {[tool.name for tool in langchain_tools]}")
+            #     self.bind_tools(langchain_tools)
+            # else:
+            #     app_logger.info("No tools available, skipping tool binding")
 
         except Exception as e:
             app_logger.error(f"Failed to update system message: {str(e)}")
@@ -307,6 +297,8 @@ class Chatbot():
                 if not isinstance(msg, SystemMessage)
             ]
             self.memory.chat_memory.add_message(SystemMessage(content=fallback_message))
+            # Update the instance attribute to keep it in sync
+            self.system_message = fallback_message
             app_logger.info("Set fallback system message due to error")
 
     async def _get_context_from_query(self, query: str, k: int = 3) -> str:
@@ -339,10 +331,6 @@ class Chatbot():
         context = await self._get_context_from_query(message) if self.vector_store else ""
         await self._system_message()
         return context
-    
-    async def get_available_tools(self):
-        """Get the available tools"""
-        return self.mcp_manager.get_mcp_servers()
 
     async def chat(self, message: str) -> AsyncGenerator[str, None]:
         """
@@ -371,11 +359,15 @@ class Chatbot():
         self.memory.chat_memory.add_message(HumanMessage(content=message))
 
         try:
-            messages = ([{"role": "system", "content": self.system_message}] if self.system_message else [])
-            history = self.get_history()
-            messages.extend({"role": "user" if isinstance(m, HumanMessage) else "assistant", "content": m.content} for m in history)
-            human_msg_content = f"{message}{context}" if context else message
-            messages.append({"role": "user", "content": human_msg_content})
+            # Build messages directly from memory instead of using static system_message
+            messages = []
+            for msg in self.memory.chat_memory.messages:
+                if isinstance(msg, SystemMessage):
+                    messages.append({"role": "system", "content": msg.content})
+                elif isinstance(msg, HumanMessage):
+                    messages.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    messages.append({"role": "assistant", "content": msg.content})
 
             app_logger.info(f"Streaming chat with {len(messages)} messages")
             app_logger.debug(f"Messages: {messages}")
@@ -614,469 +606,8 @@ class Chatbot():
             return []
 
 
-class MCPClient:
-    """Client for connecting to MCP servers with Ollama integration"""
-
-    def __init__(self, model_name: str = None):
-        """
-        Initialize the MCP client
-
-        Args:
-            model_name: Optional model name (defaults to OLLAMA_MODEL env var or "llama3.2")
-        """
-        print(f"Initializing MCPClient with model: {model_name}")
-        # Initialize session and client objects
-        self.session: Optional[ClientSession] = None
-        self._streams_context = None
-        self._session_context = None
-        self.exit_stack = AsyncExitStack()
-        self.model = model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
-        self.direct_mode = False  # Flag to indicate if we're in direct chat mode
-        self.available_tools = []  # Store tools dynamically
-        
-        # Initialize chatbot with a placeholder system message
-        # We'll update this after connecting to the server
-        placeholder_system_message = (
-            "You are an assistant with access to MCP tools. When a user requests an action, "
-            "respond with a JSON tool call in this format: "
-            "{\"name\": \"tool_name\", \"arguments\": {\"arg_name\": \"value\"}}. "
-            "Available tools will be provided after server connection."
-        )
-        # Initialize chatbot
-        self.chatbot = Chatbot(
-            model_name=self.model,
-            system_message=placeholder_system_message,
-            verbose=True
-        )
-
-        app_logger.info(f"MCPClient initialized with model: {self.model}")
-
-    async def _update_system_message_with_tools(self):
-        """Update the chatbot's system message with the list of available tools."""
-        if not self.session:
-            return
-        
-        try:
-            tools_response = await self.session.list_tools()
-            self.available_tools = [tool.name for tool in tools_response.tools]
-            if not self.available_tools:
-                app_logger.warning("No tools available from the MCP server.")
-                return
-
-            system_message = (
-                "You are an assistant with access to MCP tools. For queries requiring a tool, "
-                "indicate which tool you will use in natural language, e.g., 'I will use the <tool_name> tool.' "
-                f"Available tools: {', '.join(self.available_tools)}. "
-                "For other queries, provide a direct answer in natural language."
-            )
-            self.chatbot.memory.chat_memory.messages = [
-                msg for msg in self.chatbot.memory.chat_memory.messages 
-                if not isinstance(msg, SystemMessage)
-            ]
-            self.chatbot.memory.chat_memory.add_message(SystemMessage(content=system_message))
-            app_logger.info(f"Updated system message with tools: {self.available_tools}")
-
-            # Bind LangChain tools to the chatbot
-            langchain_tools = await self._create_langchain_tools()
-            self.chatbot.bind_tools(langchain_tools)
-        except Exception as e:
-            app_logger.error(f"Failed to update system message with tools: {str(e)}")
-
-    async def _create_langchain_tools(self) -> List[Tool]:
-        """Create LangChain Tool objects from MCP tools."""
-        if not self.session:
-            return []
-        
-        try:
-            tools_response = await self.session.list_tools()
-            langchain_tools = []
-            for mcp_tool in tools_response.tools:
-                # Define a simple schema for tool arguments (adjust based on tool requirements)
-                class ToolArgs(BaseModel):
-                    args: Dict[str, Any] = Field(description="Arguments for the tool")
-                
-                async def tool_func(args: Dict[str, Any], tool_name=mcp_tool.name) -> str:
-                    """Execute the MCP tool with the given arguments."""
-                    result = await self.session.call_tool(tool_name, args)
-                    return str(getattr(result, 'content', result))
-                
-                tool = Tool.from_function(
-                    func=None,
-                    coroutine=tool_func,
-                    name=mcp_tool.name,
-                    description=f"MCP tool: {mcp_tool.name}",
-                    args_schema=ToolArgs,
-                )
-                langchain_tools.append(tool)
-            return langchain_tools
-        except Exception as e:
-            app_logger.error(f"Error creating LangChain tools: {str(e)}")
-            return []
-
-    async def connect_to_sse_server(self, server_url: str) -> bool:
-        """
-        Connect to an MCP server running with SSE transport
-
-        Args:
-            server_url: URL of the SSE server
-
-        Returns:
-            bool: True if connection was successful
-        """
-        # Ensure any previous connections are cleaned up first
-        await self.cleanup()
-
-        try:
-            self._streams_context = sse_client(url=server_url)
-            streams = await self._streams_context.__aenter__()
-            self._session_context = ClientSession(*streams)
-            self.session = await self._session_context.__aenter__()
-            await self.session.initialize()
-            app_logger.info("Initialized SSE client...")
-            app_logger.info("Listing tools...")
-            response = await self.session.list_tools()
-            app_logger.info(f"Connected to server with tools: {[tool.name for tool in response.tools]}")
-            await self.chatbot.initialize()
-            await self._update_system_message_with_tools()
-            return True
-        except Exception as e:
-            error_msg = str(e).lower()
-            if self._is_port_in_use_error(error_msg):
-                # Extract server URL parts to show in the error message
-                from urllib.parse import urlparse
-                parsed_url = urlparse(server_url)
-                server_address = f"{parsed_url.netloc}"
-                app_logger.error(f"Your local server at {server_address} is busy by other app or proxy")
-            else:
-                app_logger.error(f"Error connecting to SSE server: {str(e)}")
-            await self.cleanup()
-            raise  # Re-raise the exception after cleanup
-
-    async def connect_to_stdio_server(self, command: str, args: list) -> bool:
-        """
-        Connect to an MCP server running with STDIO transport (NPX, UV, etc.)
-
-        Args:
-            command: Command to run (e.g., "npx", "uv")
-            args: Arguments to pass to the command
-
-        Returns:
-            bool: True if connection was successful
-        """
-        # Ensure any previous connections are cleaned up first
-        await self.cleanup()
-
-        try:
-            if os.name == 'nt' and command in ['npx', 'uv']:
-                cmd_args = ' '.join([command] + args)
-                server_params = StdioServerParameters(command='cmd.exe', args=['/c', cmd_args])
-            else:
-                server_params = StdioServerParameters(command=command, args=args)
-            self._streams_context = stdio_client(server_params)
-            streams = await self._streams_context.__aenter__()
-            self._session_context = ClientSession(*streams)
-            self.session = await self._session_context.__aenter__()
-            await asyncio.wait_for(self.session.initialize(), timeout=10.0)
-            app_logger.info(f"Initialized {command.upper()} client...")
-            app_logger.info("Listing tools...")
-            response = await self.session.list_tools()
-            app_logger.info(f"Connected to server with tools: {[tool.name for tool in response.tools]}")
-            await self.chatbot.initialize()
-            await self._update_system_message_with_tools()  # Update after connection
-            return True
-        except Exception as e:
-            error_msg = str(e).lower()
-            if self._is_port_in_use_error(error_msg):
-                # Try to extract port information from command args
-                port_info = self._extract_port_from_args(args)
-                app_logger.error(f"Your local server at {port_info} is busy by other app or proxy")
-            else:
-                app_logger.error(f"Error connecting to STDIO server: {str(e)}")
-            await self.cleanup()
-            raise  # Re-raise the exception after cleanup
-
-    async def connect_to_configured_server(self, server_name: str) -> bool:
-        """Connect to an MCP server by name from the configuration."""
-        config = await OllamaMCPPackage.load_mcp_config()
-        server_config = config["mcpServers"].get(server_name)
-        if not server_config:
-            app_logger.error(f"No configuration found for server: {server_name}")
-            return False
-
-        server_type = server_config.get("type", "stdio")
-        try:
-            if server_type == "sse":
-                server_url = server_config.get("url")
-                if not server_url:
-                    raise ValueError("SSE server URL is missing")
-                return await self.connect_to_sse_server(server_url)
-            elif server_type == "stdio":
-                command = server_config.get("command")
-                args = server_config.get("args", [])
-                if not command or not args:
-                    raise ValueError("STDIO server requires command and args")
-                return await self.connect_to_stdio_server(command, args)
-            else:
-                app_logger.error(f"Unsupported server type: {server_type}")
-                return False
-        except Exception as e:
-            app_logger.error(f"Failed to connect to {server_name}: {str(e)}")
-            return False
-
-    def _is_port_in_use_error(self, error_message: str) -> bool:
-        """Helper method to detect if an error is related to port conflicts"""
-        port_conflict_indicators = [
-            "address already in use",
-            "port already in use",
-            "address in use",
-            "eaddrinuse",
-            "connection refused",
-            "cannot bind to address",
-            "failed to listen on"
-        ]
-
-        error_message = error_message.lower()
-        return any(indicator in error_message for indicator in port_conflict_indicators)
-
-    def _extract_port_from_args(self, args: list) -> str:
-        """Try to extract port information from command args"""
-        # Common patterns for port specification in command line args
-        port = "unknown port"
-
-        for i, arg in enumerate(args):
-            if arg == "--port" and i + 1 < len(args):
-                port = args[i + 1]
-                break
-            elif arg.startswith("--port="):
-                port = arg.split("=", 1)[1]
-                break
-            elif arg == "-p" and i + 1 < len(args):
-                port = args[i + 1]
-                break
-
-        return port
-
-    async def cleanup(self):
-        """
-        Properly clean up the session and streams
-
-        Returns:
-            None
-        """
-        try:
-            # Clean up the chatbot
-            if hasattr(self, 'chatbot') and self.chatbot:
-                await self.chatbot.cleanup()
-
-            if self._session_context:
-                try:
-                    await self._session_context.__aexit__(None, None, None)
-                except Exception as e:
-                    app_logger.error(f"Error during session cleanup: {str(e)}")
-                finally:
-                    self._session_context = None
-
-            if self._streams_context:
-                try:
-                    await self._streams_context.__aexit__(None, None, None)
-                except Exception as e:
-                    app_logger.error(f"Error during streams cleanup: {str(e)}")
-                finally:
-                    self._streams_context = None
-
-            # Force garbage collection to help release resources
-            import gc
-            gc.collect()
-
-            # Reset resources
-            self.session = None
-        except Exception as e:
-            app_logger.error(f"Unexpected error during cleanup: {str(e)}")
-
-    async def process_query(self, query: str) -> str:
-        """
-        Process a query using Ollama and available tools
-
-        Args:
-            query: The query text to process
-
-        Returns:
-            str: Response text
-        """
-        # Try to get tools list, with reconnection logic if needed
-        if not self.session:
-            return "Not connected to an MCP server. Please connect first."
-        
-        try:
-            tools_response = await self.session.list_tools()
-            available_tools = {tool.name: tool for tool in tools_response.tools}
-            app_logger.info(f"Available tools: {list(available_tools.keys())}")
-            
-            initial_result = await self.chatbot.chat(query)
-            final_text = [initial_result]
-            tool_results = []
-            
-            # Look for tool calls in the response
-            tool_call_pattern = r"\{\s*\"name\":\s*\"([^\"]+)\"\s*,\s*\"arguments\":\s*(\{[^}]+\})\s*\}"
-            matches = re.findall(tool_call_pattern, initial_result)
-            
-            for tool_name, args_str in matches:
-                if tool_name in available_tools:
-                    try:
-                        tool_args = json.loads(args_str)
-                        app_logger.info(f"Executing tool {tool_name} with args: {tool_args}")
-                        result = await self.session.call_tool(tool_name, tool_args)
-                        result_content = str(getattr(result, 'content', result))
-                        tool_results.append({"call": tool_name, "result": result_content})
-                        final_text.append(f"[Tool {tool_name} result: {result_content}]")
-                        
-                        # Follow-up with the chatbot
-                        follow_up = f"Tool {tool_name} returned: {result_content}. Provide your final answer."
-                        final_response = await self.chatbot.chat(follow_up)
-                        final_text.append(final_response)
-                    except Exception as e:
-                        final_text.append(f"[Error calling tool {tool_name}: {str(e)}]")
-                else:
-                    final_text.append(f"[Tool {tool_name} not available]")
-            
-            return "\n".join(final_text)
-        except Exception as e:
-            app_logger.error(f"Error in process_query: {str(e)}")
-            return f"Error: {str(e)}"
-
-    async def process_query_stream(self, query: str):
-        """
-        Process a query with MCP tools and stream the responses
-
-        Args:
-            query: The query text to process
-
-        Yields:
-            str: Response chunks as they arrive
-            None: Signals completion
-        """
-        if not self.session:
-            yield f"data: {json.dumps({'type': 'token', 'response': 'Not connected to an MCP server. Please connect first.'})}\n\n"
-            yield None
-            return
-
-        try:
-            # Stream initial response from chatbot
-            full_initial_response = ""
-            pending_tool_call = None
-            async for chunk in self.chatbot.chat(query):
-                if chunk is None:
-                    break
-                if isinstance(chunk, dict) and 'tool_call' in chunk:
-                    pending_tool_call = chunk['tool_call']
-                    continue  # Skip streaming tool call details
-                full_initial_response += chunk
-                yield f"data: {json.dumps({'type': 'token', 'response': chunk})}\n\n"
-
-            # Handle tool call if present
-            if pending_tool_call:
-                tool_name = pending_tool_call['name']
-                tool_args = pending_tool_call['arguments']
-                if tool_name in self.available_tools:
-                    try:
-                        app_logger.info(f"Executing tool {tool_name} with args: {tool_args}")
-                        result = await self.session.call_tool(tool_name, tool_args)
-                        result_content = str(getattr(result, 'content', result))
-                        
-                        # Stream tool result in human-readable form
-                        tool_message = f"The {tool_name} tool returned: {result_content}"
-                        yield f"data: {json.dumps({'type': 'token', 'response': tool_message})}\n\n"
-
-                        # Follow-up with chatbot for final answer
-                        follow_up = (
-                            f"Query: {query}\n"
-                            f"Tool {tool_name} returned: {result_content}\n"
-                            f"Provide a natural language response to the query based on this result."
-                        )
-                        async for chunk in self.chatbot.chat(follow_up):
-                            if chunk is None:
-                                break
-                            yield f"data: {json.dumps({'type': 'token', 'response': chunk})}\n\n"
-                    except Exception as e:
-                        error_msg = f"Sorry, an error occurred while using the {tool_name} tool: {str(e)}"
-                        yield f"data: {json.dumps({'type': 'token', 'response': error_msg})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'type': 'token', 'response': f'Tool {tool_name} is not available.'})}\n\n"
-
-            # Signal completion
-            yield None
-
-        except Exception as e:
-            app_logger.error(f"Error in process_query_stream: {str(e)}")
-            yield f"data: {json.dumps({'type': 'token', 'response': f'Sorry, an error occurred: {str(e)}'})}\n\n"
-            yield None
-
-    async def process_direct_query(self, query: str) -> str:
-        """
-        Process a query using Ollama directly without MCP tools
-
-        Args:
-            query: The query text to process
-
-        Returns:
-            str: Response text
-        """
-        try:
-            # Use the chatbot's process_direct_query method
-            return await self.chatbot.process_direct_query(query)
-        except Exception as e:
-            error_msg = str(e)
-            app_logger.error(f"Error in MCPClient.process_direct_query: {error_msg}")
-            return f"An error occurred: {error_msg}"
-
-
 class OllamaMCPPackage:
     """Main package class for using Ollama with MCP"""
-
-    @staticmethod
-    async def create_client(model_name: str = "llama3.2") -> MCPClient:
-        """
-        Create and return a new MCP client
-
-        Args:
-            model_name: Optional model name to use (defaults to "llama3.2")
-
-        Returns:
-            MCPClient: Initialized client
-        """
-        return MCPClient(model_name=model_name)
-
-    @staticmethod
-    async def load_mcp_config() -> Optional[Dict[str, Any]]:
-        """
-        Load MCP configuration from the ollama_desktop_config.json file
-        
-        Returns:
-            dict: The configuration data or None if error
-        """
-        try:
-            return await asyncio.to_thread(read_ollama_config)
-        except Exception as e:
-            app_logger.error(f"Error loading MCP config: {str(e)}")
-            return None
-
-    @staticmethod
-    async def write_ollama_config(config_data: Dict[str, Any]) -> bool:
-        """
-        Write configuration data to the ollama_desktop_config.json file
-        
-        Args:
-            config_data: The configuration data to write
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            from app.core.config import write_ollama_config
-            return await asyncio.to_thread(write_ollama_config, config_data)
-        except Exception as e:
-            app_logger.error(f"Error writing Ollama config: {str(e)}")
-            return False
 
     @staticmethod
     async def create_standalone_chatbot(

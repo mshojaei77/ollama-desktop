@@ -4,7 +4,7 @@ import platform
 from typing import Dict, List, Any, Optional, Union
 from pathlib import Path
 
-class MCPManager:
+class MCPServersConfig:
     """
     A comprehensive configuration manager for Ollama desktop configuration
     with support for MCP tools management.
