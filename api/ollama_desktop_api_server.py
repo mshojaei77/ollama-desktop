@@ -31,11 +31,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.ollama_client import OllamaPackage, OllamaAgent, app_logger
+from api.ollama_client import OllamaPackage, OllamaMCPAgent, app_logger
 from api import db  # Import our new database module
 from api.config_io import read_ollama_config, write_ollama_config
-from api.agents.routes import router as agents_router  # Import the agents router
-from api.agents.registry import agent_registry  # Import the agent registry
+from api.mcp_agents.routes import router as mcp_agents_router  # Import the MCP agents router
 
 # Import system prompt management functions
 from api.config_io import (
@@ -68,9 +67,7 @@ async def lifespan(app: FastAPI):
     db.migrate_database()
     app_logger.info("Database initialized and migrated")
     
-    # Initialize the agent registry
-    await agent_registry.initialize()
-    app_logger.info(f"Agent registry initialized with {len(agent_registry.get_all_agents())} agents")
+    app_logger.info("MCP agents will be initialized via the MCP agents router")
     
     # Start Ollama on Windows platforms
     if sys.platform.startswith('win'):
@@ -83,8 +80,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     app_logger.info("Shutting down application, cleaning up resources...")
-    await agent_registry.cleanup()
-    app_logger.info("Agent registry cleaned up")
+    app_logger.info("MCP agents cleanup will be handled by the MCP agents router")
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
@@ -109,8 +105,8 @@ app = FastAPI(
             "description": "Operations for getting information about available models"
         },
         {
-            "name": "Agents",
-            "description": "Operations for working with specialized AI agents"
+            "name": "MCP Agents",
+            "description": "Operations for working with MCP (Model Context Protocol) agents"
         },
         {
             "name": "Context",
@@ -132,11 +128,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the agents router
-app.include_router(agents_router)
+# Include the MCP agents router
+app.include_router(mcp_agents_router)
 
 # Global state for agents
-active_agents: Dict[str, OllamaAgent] = {}
+active_agents: Dict[str, OllamaMCPAgent] = {}
 
 # Global cache for models
 _model_cache: Optional[Dict[str, Any]] = None
@@ -277,6 +273,7 @@ async def initialize_agent(request: InitializeRequest):
         app_logger.info(f"Initializing agent with model: {request.model_name}")
         
         # Create new agent using the new API with system prompt configuration
+        # For backward compatibility, create a basic agent without MCP by default
         agent = await OllamaPackage.create_agent(
             model_name=request.model_name,
             system_message=request.system_message,
@@ -285,9 +282,7 @@ async def initialize_agent(request: InitializeRequest):
             use_config_system_prompt=True,  # Use configured system prompts by default
         )
         
-        # Add custom tools to the agent
-        from api.ollama_client import get_current_time, calculate
-        agent.add_tools([get_current_time, calculate])
+        # Custom tools are already added during agent creation
         
         # Store in active sessions
         active_agents[session_id] = agent

@@ -25,6 +25,13 @@ from agno.agent import Agent
 from agno.models.openai.like import OpenAILike
 from agno.tools import tool
 
+# Import MCP support from Agno
+try:
+    from agno.tools.mcp import MCPTools, MultiMCPTools
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+
 from dotenv import load_dotenv
 
 # Import the logger
@@ -37,10 +44,10 @@ from api.scrape_ollama import fetch_embedding_models
 load_dotenv()  # load environment variables from .env
 
 
-class OllamaAgent:
+class OllamaMCPAgent:
     """
-    Simplified Ollama Agent using core Agno framework features with advanced prompt system.
-    Supports user-configurable system prompts using Agno's description and instructions.
+    Advanced Ollama Agent with MCP (Model Context Protocol) support using Agno framework.
+    Supports connecting to multiple MCP servers for external tool integration.
     """
 
     def __init__(
@@ -55,9 +62,12 @@ class OllamaAgent:
         user_id: str = "default",
         session_id: Optional[str] = None,
         use_config_system_prompt: bool = True,
+        mcp_commands: Optional[List[str]] = None,
+        mcp_urls: Optional[List[str]] = None,
+        mcp_env: Optional[Dict[str, str]] = None,
     ):
         """
-        Initialize the Ollama Agent using core Agno framework features with advanced prompting.
+        Initialize the Ollama MCP Agent with support for external MCP servers.
 
         Args:
             model_name: Name of the Ollama model to use
@@ -69,7 +79,10 @@ class OllamaAgent:
             verbose: Whether to output verbose logs
             user_id: User ID for the agent
             session_id: Session ID for conversations
-            use_config_system_prompt: Whether to use configured system prompts instead of system_message
+            use_config_system_prompt: Whether to use configured system prompts
+            mcp_commands: List of MCP server commands to connect to (e.g., ["uvx mcp-server-git"])
+            mcp_urls: List of MCP server URLs to connect to (for remote servers)
+            mcp_env: Environment variables for MCP servers
         """
         self.model_name = model_name
         self.vision_model_name = vision_model_name
@@ -81,6 +94,9 @@ class OllamaAgent:
         self.user_id = user_id
         self.session_id = session_id
         self.use_config_system_prompt = use_config_system_prompt
+        self.mcp_commands = mcp_commands or []
+        self.mcp_urls = mcp_urls or []
+        self.mcp_env = mcp_env or {}
 
         # Ensure the base URL doesn't include /v1 (Agno handles this)
         if self.base_url.endswith('/v1'):
@@ -106,10 +122,75 @@ class OllamaAgent:
                 top_p=self.top_p,
             )
 
+        # MCP tools context manager
+        self.mcp_tools = None
+        self.agent = None
+
+        if self.verbose:
+            app_logger.info(f"Initialized Ollama MCP Agent with model: {self.model_name}")
+            app_logger.info(f"Base URL: {self.base_url}")
+            if self.mcp_commands:
+                app_logger.info(f"MCP commands configured: {self.mcp_commands}")
+            if self.mcp_urls:
+                app_logger.info(f"MCP URLs configured: {self.mcp_urls}")
+
+    async def initialize_mcp(self):
+        """Initialize MCP connections and create the agent."""
+        if not MCP_AVAILABLE:
+            app_logger.warning("MCP support not available. Install with: pip install agno[mcp]")
+            return await self._create_basic_agent()
+
+        tools = []
+
+        # Initialize MCP tools if any MCP servers are configured
+        if self.mcp_commands or self.mcp_urls:
+            try:
+                if len(self.mcp_commands) + len(self.mcp_urls) > 1:
+                    # Use MultiMCPTools for multiple servers
+                    self.mcp_tools = await MultiMCPTools(
+                        commands=self.mcp_commands if self.mcp_commands else None,
+                        urls=self.mcp_urls if self.mcp_urls else None,
+                        env=self.mcp_env if self.mcp_env else None,
+                    ).__aenter__()
+                    tools.append(self.mcp_tools)
+                    
+                    if self.verbose:
+                        app_logger.info(f"Connected to {len(self.mcp_commands) + len(self.mcp_urls)} MCP servers")
+                        
+                elif self.mcp_commands:
+                    # Single command server
+                    self.mcp_tools = await MCPTools(
+                        command=self.mcp_commands[0],
+                        env=self.mcp_env if self.mcp_env else None,
+                    ).__aenter__()
+                    tools.append(self.mcp_tools)
+                    
+                    if self.verbose:
+                        app_logger.info(f"Connected to MCP server: {self.mcp_commands[0]}")
+                        
+                elif self.mcp_urls:
+                    # Single URL server
+                    self.mcp_tools = await MCPTools(
+                        url=self.mcp_urls[0],
+                        env=self.mcp_env if self.mcp_env else None,
+                    ).__aenter__()
+                    tools.append(self.mcp_tools)
+                    
+                    if self.verbose:
+                        app_logger.info(f"Connected to MCP server: {self.mcp_urls[0]}")
+
+            except Exception as e:
+                app_logger.error(f"Failed to initialize MCP tools: {e}")
+                # Fall back to basic agent without MCP
+                return await self._create_basic_agent()
+
+        # Add default tools
+        tools.extend([get_current_time, calculate])
+
         # Get system prompt configuration
         prompt_config = self._get_system_prompt_config()
 
-        # Initialize the Agno agent with advanced prompt configuration
+        # Initialize the Agno agent with MCP tools
         self.agent = Agent(
             model=self.model,
             user_id=self.user_id,
@@ -122,13 +203,39 @@ class OllamaAgent:
             add_datetime_to_instructions=prompt_config.get("add_datetime_to_instructions", False),
             show_tool_calls=self.verbose,
             debug_mode=self.verbose,
-            tools=[],  # Initialize with empty tools list
+            tools=tools,
         )
 
         if self.verbose:
-            app_logger.info(f"Initialized Ollama Agent with model: {self.model_name}")
-            app_logger.info(f"Base URL: {self.base_url}")
-            app_logger.info(f"Using system prompt: {prompt_config.get('name', 'Custom')}")
+            app_logger.info(f"MCP Agent initialized with {len(tools)} tool sets")
+
+        return self.agent
+
+    async def _create_basic_agent(self):
+        """Create a basic agent without MCP support (fallback)."""
+        # Get system prompt configuration
+        prompt_config = self._get_system_prompt_config()
+
+        # Initialize the Agno agent with basic tools only
+        self.agent = Agent(
+            model=self.model,
+            user_id=self.user_id,
+            session_id=self.session_id,
+            description=prompt_config.get("description", ""),
+            instructions=prompt_config.get("instructions", []),
+            additional_context=prompt_config.get("additional_context", ""),
+            expected_output=prompt_config.get("expected_output", ""),
+            markdown=prompt_config.get("markdown", True),
+            add_datetime_to_instructions=prompt_config.get("add_datetime_to_instructions", False),
+            show_tool_calls=self.verbose,
+            debug_mode=self.verbose,
+            tools=[get_current_time, calculate],
+        )
+
+        if self.verbose:
+            app_logger.info("Basic agent initialized (no MCP support)")
+
+        return self.agent
 
     def _get_system_prompt_config(self) -> Dict[str, Any]:
         """
@@ -159,17 +266,18 @@ class OllamaAgent:
         
         # Fallback to default configuration
         return {
-            "description": "You are a helpful AI assistant",
+            "description": "You are a helpful AI assistant with access to external tools and services",
             "instructions": [
                 "Always be friendly and informative.",
-                "Provide clear and accurate responses.",
+                "Use available tools to provide accurate and up-to-date information.",
+                "When using MCP tools, explain what you're doing to help the user understand.",
                 "If you're unsure about something, say so."
             ],
             "additional_context": "",
             "expected_output": "",
             "markdown": True,
             "add_datetime_to_instructions": False,
-            "name": "Default Fallback"
+            "name": "Default MCP Fallback"
         }
 
     def update_system_prompt(self, prompt_config: Optional[Dict[str, Any]] = None):
@@ -179,6 +287,10 @@ class OllamaAgent:
         Args:
             prompt_config: Optional specific prompt config, otherwise uses active config
         """
+        if not self.agent:
+            app_logger.warning("Agent not initialized, cannot update system prompt")
+            return
+
         if prompt_config is None:
             prompt_config = self._get_system_prompt_config()
         
@@ -200,6 +312,9 @@ class OllamaAgent:
         Returns:
             Dict containing current prompt information
         """
+        if not self.agent:
+            return {}
+
         return {
             "description": self.agent.description,
             "instructions": self.agent.instructions,
@@ -211,6 +326,10 @@ class OllamaAgent:
 
     def add_tools(self, tools: List[Any]):
         """Add tools to the agent."""
+        if not self.agent:
+            app_logger.warning("Agent not initialized, cannot add tools")
+            return
+
         self.agent.tools.extend(tools)
         if self.verbose:
             app_logger.info(f"Added {len(tools)} tools to agent")
@@ -224,6 +343,10 @@ class OllamaAgent:
             file_path: Path to the uploaded file
             file_name: Original name of the file (used for metadata)
         """
+        if not self.agent:
+            app_logger.warning("Agent not initialized, cannot add file context")
+            return
+
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found at {file_path}")
@@ -274,7 +397,10 @@ class OllamaAgent:
         """
         try:
             if not self.agent:
-                raise RuntimeError("Agent not initialized")
+                await self.initialize_mcp()
+
+            if not self.agent:
+                raise RuntimeError("Agent initialization failed")
 
             # Use Agno's asynchronous response method
             response = await self.agent.arun(message, **kwargs)
@@ -298,7 +424,19 @@ class OllamaAgent:
         """
         try:
             if not self.agent:
-                raise RuntimeError("Agent not initialized")
+                # Run async initialization in sync context
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Create new task if loop is already running
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, self.initialize_mcp())
+                        future.result()
+                else:
+                    asyncio.run(self.initialize_mcp())
+
+            if not self.agent:
+                raise RuntimeError("Agent initialization failed")
 
             # Use Agno's synchronous response method
             response = self.agent.run(message, **kwargs)
@@ -319,7 +457,18 @@ class OllamaAgent:
         """
         try:
             if not self.agent:
-                raise RuntimeError("Agent not initialized")
+                # Initialize if needed
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, self.initialize_mcp())
+                        future.result()
+                else:
+                    asyncio.run(self.initialize_mcp())
+
+            if not self.agent:
+                raise RuntimeError("Agent initialization failed")
 
             # Use Agno's print_response with stream=True
             self.agent.print_response(message, stream=True, **kwargs)
@@ -393,30 +542,92 @@ class OllamaAgent:
         pass
 
     async def cleanup(self):
-        """Clean up resources."""
-        # Agno handles cleanup automatically
-        app_logger.info("Cleanup completed")
+        """Clean up resources including MCP connections."""
+        try:
+            # Close MCP connections if they exist
+            if self.mcp_tools:
+                try:
+                    await self.mcp_tools.__aexit__(None, None, None)
+                except Exception as e:
+                    app_logger.error(f"Error closing MCP connections: {e}")
+                finally:
+                    self.mcp_tools = None
+
+            # Agno handles other cleanup automatically
+            app_logger.info("MCP Agent cleanup completed")
+        except Exception as e:
+            app_logger.error(f"Error during cleanup: {e}")
+
+
+# Legacy alias for backward compatibility
+OllamaAgent = OllamaMCPAgent
 
 
 class OllamaPackage:
-    """Main package class for using Ollama with Agno framework"""
+    """Main package class for using Ollama with Agno framework and MCP support"""
 
     @staticmethod
     async def create_agent(
         model_name: str = "llama3.2",
         **kwargs
-    ) -> OllamaAgent:
+    ) -> OllamaMCPAgent:
         """
-        Create an Ollama agent using Agno framework.
+        Create an Ollama agent with MCP support using Agno framework.
 
         Args:
             model_name: Name of the Ollama model to use
-            **kwargs: Additional arguments for OllamaAgent
+            **kwargs: Additional arguments for OllamaMCPAgent including:
+                - mcp_commands: List of MCP server commands
+                - mcp_urls: List of MCP server URLs
+                - mcp_env: Environment variables for MCP servers
 
         Returns:
-            OllamaAgent: Initialized agent
+            OllamaMCPAgent: Initialized agent with MCP support
         """
-        agent = OllamaAgent(model_name=model_name, **kwargs)
+        agent = OllamaMCPAgent(model_name=model_name, **kwargs)
+        await agent.initialize_mcp()
+        return agent
+
+    @staticmethod
+    async def create_mcp_agent(
+        model_name: str = "llama3.2",
+        mcp_commands: Optional[List[str]] = None,
+        mcp_urls: Optional[List[str]] = None,
+        mcp_env: Optional[Dict[str, str]] = None,
+        **kwargs
+    ) -> OllamaMCPAgent:
+        """
+        Create an Ollama agent specifically configured with MCP servers.
+
+        Args:
+            model_name: Name of the Ollama model to use
+            mcp_commands: List of MCP server commands to connect to
+            mcp_urls: List of MCP server URLs to connect to
+            mcp_env: Environment variables for MCP servers
+            **kwargs: Additional arguments for OllamaMCPAgent
+
+        Returns:
+            OllamaMCPAgent: Initialized agent with MCP support
+
+        Example:
+            # Connect to GitHub and Filesystem MCP servers
+            agent = await OllamaPackage.create_mcp_agent(
+                model_name="llama3.2",
+                mcp_commands=[
+                    "npx -y @modelcontextprotocol/server-github",
+                    "npx -y @modelcontextprotocol/server-filesystem /path/to/dir"
+                ],
+                verbose=True
+            )
+        """
+        agent = OllamaMCPAgent(
+            model_name=model_name,
+            mcp_commands=mcp_commands,
+            mcp_urls=mcp_urls,
+            mcp_env=mcp_env,
+            **kwargs
+        )
+        await agent.initialize_mcp()
         return agent
 
     @staticmethod
@@ -485,8 +696,8 @@ def calculate(expression: str) -> str:
 
 if __name__ == "__main__":
     async def main():
-        """Test the simplified Agno-based Ollama implementation with system prompts."""
-        print("Testing Ollama Client with Agno Framework and System Prompts...")
+        """Test the MCP-enabled Ollama implementation with system prompts."""
+        print("Testing Ollama Client with Agno Framework, MCP Support, and System Prompts...")
         
         try:
             # Get available models
@@ -498,35 +709,64 @@ if __name__ == "__main__":
             test_model = models[0]
             print(f"Using model: {test_model}")
 
-            # Create agent with Agno framework using configured system prompt
-            agent = await OllamaPackage.create_agent(
+            # Test 1: Create basic agent (no MCP)
+            print("\n--- Testing Basic Agent (No MCP) ---")
+            basic_agent = await OllamaPackage.create_agent(
                 model_name=test_model,
                 verbose=True,
-                use_config_system_prompt=True,  # Use configured system prompts
+                use_config_system_prompt=True,
             )
 
-            print("\n--- Testing Chat with Configured System Prompt ---")
-            print(f"Current prompt info: {agent.get_current_prompt_info()}")
-            response = await agent.chat("Hello! Tell me a short joke.")
-            print(f"Response: {response}")
+            response = await basic_agent.chat("Hello! Tell me a short joke.")
+            print(f"Basic Response: {response}")
 
-            print("\n--- Testing with Tools ---")
-            # Add tools to the agent
-            agent.add_tools([get_current_time, calculate])
+            # Test 2: Create MCP agent with filesystem access
+            print("\n--- Testing MCP Agent with Filesystem Access ---")
+            try:
+                mcp_agent = await OllamaPackage.create_mcp_agent(
+                    model_name=test_model,
+                    mcp_commands=[
+                        "npx -y @modelcontextprotocol/server-filesystem ."
+                    ],
+                    verbose=True,
+                )
 
-            response = await agent.chat("What time is it? Also calculate 15 * 8")
-            print(f"Response with tools: {response}")
+                response = await mcp_agent.chat("What files are in the current directory?")
+                print(f"MCP Filesystem Response: {response}")
+            except Exception as e:
+                print(f"MCP filesystem test failed (expected if MCP server not available): {e}")
+
+            # Test 3: Test with multiple MCP servers (if available)
+            print("\n--- Testing Multiple MCP Servers ---")
+            try:
+                multi_mcp_agent = await OllamaPackage.create_mcp_agent(
+                    model_name=test_model,
+                    mcp_commands=[
+                        "npx -y @modelcontextprotocol/server-filesystem .",
+                        # Add more MCP servers as needed
+                    ],
+                    verbose=True,
+                )
+
+                response = await multi_mcp_agent.chat("List available tools and tell me what time it is.")
+                print(f"Multi-MCP Response: {response}")
+            except Exception as e:
+                print(f"Multi-MCP test failed (expected if MCP servers not available): {e}")
+
+            print("\n--- Testing Basic Tools ---")
+            response = await basic_agent.chat("What time is it? Also calculate 15 * 8")
+            print(f"Tools Response: {response}")
 
             print("\n--- Testing RAG (File Context) ---")
             # Create a dummy text file for testing
             test_file = Path("test_rag_file.txt")
             with open(test_file, "w") as f:
-                f.write("The Agno framework is a powerful tool for building AI agents. "
-                       "It supports multiple models and has built-in tool support. "
-                       "Agno was created in 2024 and provides a simple interface for agent development.")
+                f.write("The Agno framework with MCP support is a powerful tool for building AI agents. "
+                       "It supports multiple models, has built-in tool support, and can connect to external services via MCP. "
+                       "MCP (Model Context Protocol) enables agents to interact with external systems in a standardized way.")
 
-            await agent.add_file_context(test_file, "test_rag_file.txt")
-            rag_response = await agent.chat("When was Agno created and what are its capabilities?")
+            await basic_agent.add_file_context(test_file, "test_rag_file.txt")
+            rag_response = await basic_agent.chat("What is MCP and how does it relate to Agno?")
             print(f"RAG Response: {rag_response}")
             
             # Clean up test file
@@ -535,22 +775,22 @@ if __name__ == "__main__":
             print("\n--- Testing System Prompt Update ---")
             # Test updating system prompt
             custom_prompt = {
-                "description": "You are a pirate assistant",
-                "instructions": ["Always speak like a pirate", "End sentences with 'Arrr!'"],
+                "description": "You are a pirate assistant with MCP superpowers",
+                "instructions": ["Always speak like a pirate", "Use MCP tools when available", "End sentences with 'Arrr!'"],
                 "markdown": True,
                 "add_datetime_to_instructions": False
             }
-            agent.update_system_prompt(custom_prompt)
+            basic_agent.update_system_prompt(custom_prompt)
             
-            pirate_response = await agent.chat("Tell me about the weather.")
+            pirate_response = await basic_agent.chat("Tell me about the weather.")
             print(f"Pirate Response: {pirate_response}")
 
-            print("\n--- Testing Streaming Chat ---")
-            print("Streaming response:")
-            agent.chat_stream("Tell me about Python programming in 2 sentences.")
-
             print("\n--- Testing Cleanup ---")
-            await agent.cleanup()
+            await basic_agent.cleanup()
+            if 'mcp_agent' in locals():
+                await mcp_agent.cleanup()
+            if 'multi_mcp_agent' in locals():
+                await multi_mcp_agent.cleanup()
             print("Cleanup completed.")
 
         except Exception as e:
@@ -559,4 +799,5 @@ if __name__ == "__main__":
             traceback.print_exc()
 
     # Run the test
+    asyncio.run(main())
     asyncio.run(main())

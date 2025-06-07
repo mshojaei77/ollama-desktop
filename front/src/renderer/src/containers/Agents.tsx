@@ -1,24 +1,27 @@
 import { useState, useEffect } from 'react'
-import { Search, ChevronDown, Tag, RefreshCw } from 'lucide-react'
-import agentService, { Agent } from '../services/agentService'
+import { Search, ChevronDown, Tag, RefreshCw, Plus } from 'lucide-react'
 import AgentChat from '../components/AgentChat'
 import { getAgentIconPath } from '../utils'
+import mcpAgentService, { MCPAgent } from '../services/mcpAgentService'
 
 function Agents(): JSX.Element {
   const [filter, setFilter] = useState('')
   const [selectedTag, setSelectedTag] = useState('')
-  const [agents, setAgents] = useState<Agent[]>([])
+  const [agents, setAgents] = useState<MCPAgent[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [allTags, setAllTags] = useState<string[]>([])
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [showCreateAgent, setShowCreateAgent] = useState(false)
 
-  // Fetch agents from API
+  // Fetch MCP agents from API
   const fetchAgents = async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const agentList = await agentService.getAllAgents()
+      // Service returns a response object { agents, count, ... } or directly an array
+      const data = await mcpAgentService.getAllAgents()
+      const agentList = Array.isArray(data) ? data : data.agents
       setAgents(agentList)
       
       // Extract all unique tags from agents
@@ -28,8 +31,8 @@ function Agents(): JSX.Element {
       })
       setAllTags(Array.from(tags).sort())
     } catch (err) {
-      console.error('Failed to fetch agents:', err)
-      setError('Failed to load agents. Please try again.')
+      console.error('Failed to fetch MCP agents:', err)
+      setError('Failed to load MCP agents. Please try again.')
     } finally {
       setIsLoading(false)
     }
@@ -57,13 +60,21 @@ function Agents(): JSX.Element {
   }
 
   // Open chat with an agent
-  const handleOpenChat = (agentId: string, e?: React.MouseEvent) => {
+  const handleOpenChat = async (agentId: string, e?: React.MouseEvent) => {
     // If the click was on a tag, prevent opening the chat
     if (e?.target instanceof HTMLElement && 
        (e.target.closest('.agent-tag') || e.target.closest('.agent-tag-wrapper'))) {
       return;
     }
-    setSelectedAgent(agentId)
+    
+    try {
+      // Start the MCP agent if it's not already active
+      await mcpAgentService.startAgent(agentId)
+      setSelectedAgent(agentId)
+    } catch (err) {
+      console.error('Failed to start MCP agent:', err)
+      setError('Failed to start agent. Please try again.')
+    }
   }
 
   // Handle tag click
@@ -84,7 +95,7 @@ function Agents(): JSX.Element {
 
   // If an agent is selected, show the chat interface
   if (selectedAgent) {
-    return <AgentChat agentId={selectedAgent} onBack={handleBackToAgents} />
+    return <AgentChat agentId={selectedAgent} onBack={handleBackToAgents} isMCPAgent={true} />
   }
 
   return (
@@ -92,18 +103,28 @@ function Agents(): JSX.Element {
       <div className="flex flex-col mb-6">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-semibold text-foreground">
-            Agents <span className="text-xs bg-accent/20 text-muted-foreground px-1 rounded ml-1">BETA</span>
+            MCP Agents <span className="text-xs bg-accent/20 text-muted-foreground px-1 rounded ml-1">BETA</span>
           </h1>
-          <button 
-            onClick={handleReload}
-            disabled={isLoading}
-            className="p-2 rounded-full hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors"
-            title="Refresh agents"
-          >
-            <RefreshCw size={18} className={isLoading ? "animate-spin" : ""} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowCreateAgent(true)}
+              className="px-3 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors flex items-center gap-2"
+              title="Create new MCP agent"
+            >
+              <Plus size={16} />
+              Create Agent
+            </button>
+            <button 
+              onClick={handleReload}
+              disabled={isLoading}
+              className="p-2 rounded-full hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh agents"
+            >
+              <RefreshCw size={18} className={isLoading ? "animate-spin" : ""} />
+            </button>
+          </div>
         </div>
-        <p className="text-muted-foreground text-sm">Supercharge your workflow with AI agents tailored to your exact needs</p>
+        <p className="text-muted-foreground text-sm">Build powerful AI agents with MCP (Model Context Protocol) integration for external tools and services</p>
       </div>
 
       <div className="flex items-center justify-between mb-6">
@@ -156,7 +177,7 @@ function Agents(): JSX.Element {
         </div>
       ) : filteredAgents.length === 0 ? (
         <div className="text-center py-10 rounded-lg border border-border bg-card p-6">
-          <p className="text-muted-foreground mb-2">No agents found matching your filters</p>
+          <p className="text-muted-foreground mb-2">No MCP agents found matching your filters</p>
           {filter || selectedTag ? (
             <button 
               className="text-primary hover:underline"
@@ -165,9 +186,17 @@ function Agents(): JSX.Element {
               Clear filters
             </button>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Try refreshing or check your server connection
-            </p>
+            <div>
+              <p className="text-sm text-muted-foreground mb-4">
+                No MCP agents available. Create your first agent to get started.
+              </p>
+              <button 
+                onClick={() => setShowCreateAgent(true)}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+              >
+                Create First Agent
+              </button>
+            </div>
           )}
         </div>
       ) : (
@@ -188,25 +217,8 @@ function Agents(): JSX.Element {
                       loading="eager"
                       decoding="async"
                       onError={(e) => {
-                        // If icon from local assets fails, try the URL from agent metadata
-                        // Add size parameters for better resolution if it's an external URL
-                        const iconUrl = agent.icon || '';
-                        if (iconUrl.includes('placeholder.com')) {
-                          // If already a placeholder URL, ensure high resolution
-                          (e.target as HTMLImageElement).src = `https://via.placeholder.com/512x512?text=${encodeURIComponent(agent.name[0])}`;
-                        } else if (iconUrl.startsWith('http')) {
-                          // For other URLs, try to use as is with quality parameters if possible
-                          const url = new URL(iconUrl);
-                          if (url.hostname.includes('cloudinary')) {
-                            // Add quality parameters for Cloudinary
-                            (e.target as HTMLImageElement).src = `${iconUrl}/q_auto:best`;
-                          } else {
-                            (e.target as HTMLImageElement).src = iconUrl;
-                          }
-                        } else {
-                          // Create high-res placeholder as last resort
-                          (e.target as HTMLImageElement).src = `https://via.placeholder.com/512x512?text=${encodeURIComponent(agent.name[0])}&quality=100`;
-                        }
+                        // MCP agents don't have icons by default, so create a placeholder
+                        (e.target as HTMLImageElement).src = `https://via.placeholder.com/512x512?text=${encodeURIComponent(agent.name[0])}&quality=100`;
                       }}
                     />
                   </div>

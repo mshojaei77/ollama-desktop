@@ -1,13 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Send, Paperclip, Image, RefreshCw } from 'lucide-react';
-import agentService, { Agent } from '../services/agentService';
-import { getAgentIconPath } from '../utils';
+import { ArrowLeft, Send, Paperclip, Image, RefreshCw, Bot, Settings } from 'lucide-react';
+import mcpAgentService, { MCPAgent } from '../services/mcpAgentService';
 import MessageContainer, { GenericMessage } from '../containers/chat/MessageContainer';
-
-// MCP Agent interface
-
-
-import mcpAgentService, { MCPAgent } from '../services/mcpAgentService'
 
 interface Message {
   id: string;
@@ -17,14 +11,13 @@ interface Message {
   agentId: string;
 }
 
-interface AgentChatProps {
+interface MCPAgentChatProps {
   agentId: string;
   onBack: () => void;
-  isMCPAgent?: boolean;
 }
 
-function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX.Element {
-  const [agent, setAgent] = useState<Agent | MCPAgent | null>(null);
+function MCPAgentChat({ agentId, onBack }: MCPAgentChatProps): JSX.Element {
+  const [agent, setAgent] = useState<MCPAgent | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -34,24 +27,15 @@ function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX
   // Load agent details
   useEffect(() => {
     const loadAgent = async () => {
-      if (isMCPAgent) {
-        const agentData = await mcpAgentService.getAgentById(agentId);
-        if (agentData) {
-          console.log('MCP Agent data loaded:', agentData);
-          setAgent(agentData);
-        }
-      } else {
-        const agentData = await agentService.getAgentById(agentId);
-        if (agentData) {
-          console.log('Agent data loaded:', agentData);
-          console.log('Example prompts:', agentData.examplePrompts);
-          setAgent(agentData);
-        }
+      const agentData = await mcpAgentService.getAgentById(agentId);
+      if (agentData) {
+        console.log('MCP Agent data loaded:', agentData);
+        setAgent(agentData);
       }
     };
     
     loadAgent();
-  }, [agentId, isMCPAgent]);
+  }, [agentId]);
 
   // Focus on input when component mounts
   useEffect(() => {
@@ -77,9 +61,7 @@ function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX
     // Add placeholder message
     setMessages(prev => [...prev, { id: placeholderId, role: 'agent', content: '', isLoading: true, agentId: agentId }]);
 
-    const eventSource = isMCPAgent 
-      ? mcpAgentService.streamMessage(agentId, { message: prompt })
-      : agentService.streamMessage(agentId, { message: prompt });
+    const eventSource = mcpAgentService.streamMessage(agentId, { message: prompt });
     eventSourceRef.current = eventSource;
 
     eventSource.onmessage = (event) => {
@@ -101,7 +83,7 @@ function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX
           ));
         } else if (data.error) {
           // Handle error - update message content and isLoading flag
-          console.error('Error from agent:', data.error);
+          console.error('Error from MCP agent:', data.error);
           setMessages(prev => prev.map(msg =>
             msg.id === placeholderId ? { ...msg, content: 'Sorry, I encountered an error processing your request.', isLoading: false, agentId: agentId } : msg
           ));
@@ -218,29 +200,36 @@ function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX
         </button>
         
         {agent && (
-          <div className="flex items-center">
-            <img 
-              src={getAgentIconPath(agent.id)}
-              alt={agent.name}
-              className="w-10 h-10 rounded-full mr-3"
-              onError={(e) => {
-                // For MCP agents, create a placeholder since they don't have icons by default
-                const iconUrl = !isMCPAgent && 'icon' in agent ? (agent as Agent).icon || '' : '';
-                if (iconUrl && iconUrl.includes('placeholder.com')) {
-                  // If already a placeholder URL, ensure high resolution
-                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
-                } else if (iconUrl && iconUrl.startsWith('http')) {
-                  // For other URLs, try to use as is
-                  (e.target as HTMLImageElement).src = iconUrl;
-                } else {
-                  // Create high-res placeholder as default
-                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
-                }
-              }}
-            />
-            <div>
-              <h3 className="font-medium text-foreground">{agent.name}</h3>
-              <p className="text-xs text-muted-foreground">{agent.description}</p>
+          <div className="flex items-center flex-1">
+            <div className="flex-shrink-0 mr-3">
+              {agent.icon ? (
+                <img 
+                  src={agent.icon}
+                  alt={agent.name}
+                  className="w-10 h-10 rounded-full"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = `https://via.placeholder.com/40x40?text=${encodeURIComponent(agent.name[0])}&quality=100`;
+                  }}
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-primary-foreground/20 flex items-center justify-center">
+                  <Bot className="w-6 h-6 text-primary-foreground" />
+                </div>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-medium text-foreground truncate">{agent.name}</h3>
+              <p className="text-xs text-muted-foreground truncate">{agent.description}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs bg-primary-foreground/20 text-primary-foreground px-2 py-0.5 rounded">
+                  {agent.model_provider}/{agent.model_name}
+                </span>
+                {agent.mcp_servers.length > 0 && (
+                  <span className="text-xs bg-primary-foreground/20 text-primary-foreground px-2 py-0.5 rounded">
+                    {agent.mcp_servers.length} MCP Server{agent.mcp_servers.length > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -250,62 +239,44 @@ function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX
       {messages.length === 0 && agent ? (
         <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center text-center bg-background-light">
           <div className="mb-4 p-3 bg-primary-foreground rounded-full inline-flex items-center justify-center shadow-md">
-            <img 
-              src={getAgentIconPath(agent.id)}
-              alt={agent.name}
-              className="w-12 h-12"
-              onError={(e) => {
-                const iconUrl = !isMCPAgent && 'icon' in agent ? (agent as Agent).icon || '' : '';
-                if (iconUrl && iconUrl.includes('placeholder.com')) {
-                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
-                } else if (iconUrl && iconUrl.startsWith('http')) {
-                  (e.target as HTMLImageElement).src = iconUrl;
-                } else {
-                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/512?text=${encodeURIComponent(agent.name[0])}`;
-                }
-              }}
-            />
+            {agent.icon ? (
+              <img 
+                src={agent.icon}
+                alt={agent.name}
+                className="w-12 h-12"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/48x48?text=${encodeURIComponent(agent.name[0])}&quality=100`;
+                }}
+              />
+            ) : (
+              <Bot className="w-12 h-12 text-primary" />
+            )}
           </div>
           <h2 className="text-2xl font-bold text-foreground mb-1">
             {agent.name}
           </h2>
-          <p className="text-sm text-muted-foreground mb-6 max-w-md">
+          <p className="text-sm text-muted-foreground mb-2 max-w-md">
             {agent.description}
           </p>
+          {agent.mcp_servers.length > 0 && (
+            <p className="text-xs text-muted-foreground mb-6">
+              Connected to {agent.mcp_servers.length} MCP server{agent.mcp_servers.length > 1 ? 's' : ''} • 
+              Model: {agent.model_provider}/{agent.model_name}
+            </p>
+          )}
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-xl">
-            {(() => {
-              let prompts: string[] = [];
-              
-              if (!isMCPAgent && 'examplePrompts' in agent && agent.examplePrompts && agent.examplePrompts.length > 0) {
-                prompts = (agent as Agent).examplePrompts;
-              } else if (isMCPAgent && agent.example_prompts && agent.example_prompts.length > 0) {
-                prompts = agent.example_prompts;
-              } else if (isMCPAgent) {
-                prompts = [
-                  "What tools do you have available?",
-                  "How can you help me with external services?",
-                  "Tell me about your MCP capabilities",
-                  `What can you do with ${(agent as MCPAgent).mcp_servers?.length || 0} connected services?`
-                ];
-              } else {
-                prompts = [
-                  "How can you help me?",
-                  "What can you do?",
-                  "Tell me about your capabilities",
-                  "What features do you have?"
-                ];
-              }
-              
-              return prompts;
-            })().map((prompt, index) => (
+            {(agent.example_prompts && agent.example_prompts.length > 0 ? agent.example_prompts : [
+              "How can you help me?",
+              "What capabilities do you have?",
+              "What MCP servers are you connected to?",
+              "Tell me about your features"
+            ]).map((prompt, index) => (
               <button
                 key={index}
                 onClick={() => {
                   setInput(prompt);
-                  if (inputRef.current) {
-                    inputRef.current.focus();
-                  }
+                  inputRef.current?.focus();
                 }}
                 className="border border-border/80 rounded-lg p-3 text-left text-foreground bg-card hover:border-primary hover:bg-card/80 transition-colors text-sm flex-grow"
                 style={{
@@ -377,4 +348,4 @@ function AgentChat({ agentId, onBack, isMCPAgent = false }: AgentChatProps): JSX
   );
 }
 
-export default AgentChat;
+export default MCPAgentChat; 
