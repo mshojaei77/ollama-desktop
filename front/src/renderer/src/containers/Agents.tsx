@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Search, ChevronDown, Tag, RefreshCw, Plus, MoreVertical, Trash2 } from 'lucide-react'
+import { Search, ChevronDown, Tag, RefreshCw, Plus, MoreVertical, Trash2, Edit } from 'lucide-react'
 import AgentChat from '../components/AgentChat'
 import { getAgentIconPath } from '../utils'
-import mcpAgentService, { MCPAgent } from '../services/mcpAgentService'
+import mcpAgentService, { MCPAgent, UpdateMCPAgentRequest } from '../services/mcpAgentService'
 import DeleteMCPAgentModal from '../components/DeleteMCPAgentModal'
+import EditMCPAgentModal from '../components/EditMCPAgentModal'
 
 function Agents(): JSX.Element {
   const [filter, setFilter] = useState('')
@@ -15,6 +16,7 @@ function Agents(): JSX.Element {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const [showCreateAgent, setShowCreateAgent] = useState(false)
   const [agentToDelete, setAgentToDelete] = useState<MCPAgent | null>(null)
+  const [agentToEdit, setAgentToEdit] = useState<MCPAgent | null>(null)
   const [showDropdownFor, setShowDropdownFor] = useState<string | null>(null)
 
   // Fetch MCP agents from API
@@ -112,6 +114,19 @@ function Agents(): JSX.Element {
     }
   }
 
+  // Handle edit agent
+  const handleEditAgent = async (agentId: string, updates: UpdateMCPAgentRequest) => {
+    try {
+      await mcpAgentService.updateAgent(agentId, updates)
+      
+      // Refresh the agents list
+      await fetchAgents()
+    } catch (error) {
+      console.error('Error updating agent:', error)
+      throw error // Re-throw to be handled by the modal
+    }
+  }
+
   // Toggle dropdown menu
   const handleDropdownToggle = (agentId: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -167,8 +182,8 @@ function Agents(): JSX.Element {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-2">
           <div className="relative">
-            <select 
-              className="bg-background border border-border rounded-md pl-3 pr-8 py-1 text-sm text-foreground appearance-none focus:outline-none focus:ring-1 focus:ring-primary [&>option]:!bg-[#1e1e2f] dark:[&>option]:!bg-[#1e1e2f] [&>option]:!text-foreground"
+            <select
+              className="bg-background border border-border rounded-md pl-3 pr-8 py-1 text-sm text-foreground appearance-none focus:outline-none focus:ring-1 focus:ring-primary"
               value={selectedTag}
               onChange={handleTagChange}
             >
@@ -273,21 +288,32 @@ function Agents(): JSX.Element {
                           <MoreVertical size={16} />
                         </button>
                         
-                        {showDropdownFor === agent.id && (
-                          <div className="absolute right-0 top-8 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-md shadow-lg z-20 min-w-[150px] py-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setAgentToDelete(agent)
-                                setShowDropdownFor(null)
-                              }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors rounded-sm"
-                            >
-                              <Trash2 size={14} />
-                              Delete Agent
-                            </button>
-                          </div>
-                        )}
+                                                  {showDropdownFor === agent.id && (
+                            <div className="absolute right-0 top-8 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-md shadow-lg z-20 min-w-[150px] py-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setAgentToEdit(agent)
+                                  setShowDropdownFor(null)
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-[hsl(var(--foreground))] hover:bg-[hsl(var(--accent))]/10 transition-colors rounded-sm"
+                              >
+                                <Edit size={14} />
+                                Edit Agent
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setAgentToDelete(agent)
+                                  setShowDropdownFor(null)
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors rounded-sm"
+                              >
+                                <Trash2 size={14} />
+                                Delete Agent
+                              </button>
+                            </div>
+                          )}
                       </div>
                     </div>
                     
@@ -317,6 +343,15 @@ function Agents(): JSX.Element {
           agent={agentToDelete}
           onClose={() => setAgentToDelete(null)}
           onDelete={handleDeleteAgent}
+        />
+      )}
+
+      {/* Edit Agent Modal */}
+      {agentToEdit && (
+        <EditMCPAgentModal
+          agent={agentToEdit}
+          onClose={() => setAgentToEdit(null)}
+          onSave={handleEditAgent}
         />
       )}
     </div>
