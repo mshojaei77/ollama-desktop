@@ -40,13 +40,13 @@ get_current_persian_date_tool = {
 # --- End Example Tool ---
 
 
-# Try to import OllamaMCPPackage, but don't fail if it's not available
+# Try to import OllamaPackage, but don't fail if it's not available
 try:
-    from api.ollama_client import OllamaMCPPackage, OllamaChatbot # Added OllamaChatbot import
+    from api.ollama_client import OllamaPackage, OllamaChatbot
 except ImportError:
-    logger.warning("OllamaMCPPackage not available, will use fallback mode")
-    OllamaMCPPackage = None
-    OllamaChatbot = None # Set to None if import fails
+    logger.warning("OllamaPackage not available, will use fallback mode")
+    OllamaPackage = None
+    OllamaChatbot = None
 
 
 class PersianAssistant(BaseAgent):
@@ -95,14 +95,14 @@ class PersianAssistant(BaseAgent):
             True if initialization was successful, False otherwise
         """
         try:
-            # If OllamaMCPPackage/OllamaChatbot is not available, use fallback mode
-            if OllamaMCPPackage is None or OllamaChatbot is None:
+            # If OllamaPackage/OllamaChatbot is not available, use fallback mode
+            if OllamaPackage is None or OllamaChatbot is None:
                 logger.info("Using fallback mode for PersianAssistant due to missing dependencies")
                 self.fallback_mode = True
                 return True
                 
             # Initialize the Ollama chatbot
-            self.chatbot = await OllamaMCPPackage.create_standalone_chatbot(
+            self.chatbot = await OllamaPackage.create_standalone_chatbot(
                 model_name=self.config["default_model"],
                 system_message=self.config["system_message"],
                 # Pass the base_url if configured, otherwise defaults inside OllamaChatbot

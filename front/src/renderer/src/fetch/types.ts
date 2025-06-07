@@ -97,25 +97,6 @@ export interface MessageActionProps {
   onRefresh: (id: string) => void
 }
 
-export interface MCPServersResponse {
-  servers: Record<string, MCPServer>
-}
-
-export interface MCPServer {
-  type?: string
-  tools?: string[] | string
-  command?: string
-  [key: string]: unknown
-}
-
-export interface NewServerForm {
-  name: string
-  command: string
-  type: string
-  args: string
-  serverUrl: string
-}
-
 // Interface for detailed model information
 export interface ModelDetails {
   family?: string

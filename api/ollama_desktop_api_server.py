@@ -1,7 +1,7 @@
 """
-Ollama MCP API - Integration example with FastAPI
-run with: uvicorn ollama_mcp_api:app --reload
-or python -m uvicorn ollama_mcp_api:app --reload
+Ollama API - Integration example with FastAPI
+run with: uvicorn ollama_api_server:app --reload
+or python -m uvicorn ollama_api_server:app --reload
 """
 
 import os
@@ -31,11 +31,20 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.ollama_client import OllamaMCPPackage, OllamaChatbot, MCPClient, app_logger
+from api.ollama_client import OllamaPackage, OllamaAgent, app_logger
 from api import db  # Import our new database module
 from api.config_io import read_ollama_config, write_ollama_config
 from api.agents.routes import router as agents_router  # Import the agents router
 from api.agents.registry import agent_registry  # Import the agent registry
+
+# Import system prompt management functions
+from api.config_io import (
+    get_active_system_prompt, 
+    set_active_system_prompt, 
+    save_system_prompt, 
+    delete_system_prompt, 
+    get_all_system_prompts
+)
 
 # Import scraper functions
 from api.scrape_ollama import (
@@ -79,8 +88,8 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(
-    title="Ollama MCP API",
-    description="API for interacting with Ollama models and MCP tools",
+    title="Ollama Desktop API",
+    description="API for interacting with Ollama models",
     version="1.0.0",
     docs_url="/docs",              # Explicitly set Swagger UI endpoint (default)
     redoc_url="/redoc",            # Also enable ReDoc (alternative docs)
@@ -89,11 +98,7 @@ app = FastAPI(
     openapi_tags=[
         {
             "name": "Chat",
-            "description": "Operations for working with standalone Ollama chatbots"
-        },
-        {
-            "name": "MCP",
-            "description": "Operations for working with MCP-enabled clients and tools"
+            "description": "Operations for working with standalone Ollama agents"
         },
         {
             "name": "Sessions",
@@ -110,6 +115,10 @@ app = FastAPI(
         {
             "name": "Context",
             "description": "Operations for adding context from files to sessions"
+        },
+        {
+            "name": "System Prompts",
+            "description": "Operations for managing user-configurable system prompts"
         }
     ]
 )
@@ -126,9 +135,8 @@ app.add_middleware(
 # Include the agents router
 app.include_router(agents_router)
 
-# Global state for clients and chatbots
-active_clients: Dict[str, MCPClient] = {}
-active_chatbots: Dict[str, OllamaChatbot] = {}
+# Global state for agents
+active_agents: Dict[str, OllamaAgent] = {}
 
 # Global cache for models
 _model_cache: Optional[Dict[str, Any]] = None
@@ -153,14 +161,6 @@ class InitializeResponse(BaseModel):
     session_id: str
     status: str
     model: str
-
-class MCPServerConnectRequest(BaseModel):
-    server_type: str  # "sse" or "stdio"
-    server_url: Optional[str] = None  # For SSE
-    command: Optional[str] = None     # For STDIO
-    args: Optional[List[str]] = None  # For STDIO
-    session_id: Optional[str] = None
-    model_name: str = "llama3.2"
 
 class StatusResponse(BaseModel):
     status: str
@@ -193,13 +193,30 @@ class AvailableChatsResponse(BaseModel):
     sessions: List[ChatSession]
     count: int
 
-class MCPServerAddRequest(BaseModel):
-    server_name: str
-    server_type: str = "stdio"  # "sse" or "stdio"
-    command: Optional[str] = None  # For STDIO
-    args: Optional[List[str]] = None  # For STDIO
-    server_url: Optional[str] = None  # For SSE
+# System Prompt Models
+class SystemPromptConfig(BaseModel):
+    name: str
+    description: str
+    instructions: List[str]
+    additional_context: Optional[str] = ""
+    expected_output: Optional[str] = ""
+    markdown: bool = True
+    add_datetime_to_instructions: bool = False
 
+class SystemPrompt(BaseModel):
+    id: str
+    config: SystemPromptConfig
+
+class SystemPromptsResponse(BaseModel):
+    prompts: List[SystemPrompt]
+    active_prompt_id: str
+
+class SetActivePromptRequest(BaseModel):
+    prompt_id: str
+
+class SavePromptRequest(BaseModel):
+    prompt_id: str
+    config: SystemPromptConfig
 
 # ----- Helper Functions -----
 
@@ -210,16 +227,11 @@ def generate_session_id() -> str:
 
 async def cleanup_session(session_id: str):
     """Clean up resources for a session"""
-    # 1. Clean up in-memory resources (clients/chatbots)
-    if session_id in active_clients:
-        await active_clients[session_id].cleanup()
-        del active_clients[session_id]
-        app_logger.info(f"Cleaned up client session: {session_id}")
-        
-    if session_id in active_chatbots:
-        await active_chatbots[session_id].cleanup()
-        del active_chatbots[session_id]
-        app_logger.info(f"Cleaned up chatbot session: {session_id}")
+    # 1. Clean up in-memory resources (agents)
+    if session_id in active_agents:
+        await active_agents[session_id].cleanup()
+        del active_agents[session_id]
+        app_logger.info(f"Cleaned up agent session: {session_id}")
     
     # 2. Permanently delete session and history from the database
     try:
@@ -237,18 +249,18 @@ async def root():
     """Root endpoint providing API status information"""
     return {
         "status": "ok",
-        "service": "Ollama MCP API",
-        "active_sessions": len(active_clients) + len(active_chatbots)
+        "service": "Ollama Desktop API",
+        "active_sessions": len(active_agents)
     }
 
 @app.post("/chat/initialize", response_model=InitializeResponse, tags=["Chat"])
-async def initialize_chatbot(request: InitializeRequest):
+async def initialize_agent(request: InitializeRequest):
     """
-    Initialize a standalone Ollama chatbot
+    Initialize a standalone Ollama agent
     
-    - Creates a new chatbot with the specified model
+    - Creates a new agent with the specified model
     - Returns a session ID for subsequent interactions
-    - Optionally accepts a system message to customize the chatbot's behavior
+    - Optionally accepts a system message to customize the agent's behavior
     """
     try:
         # Validate model name is not empty
@@ -258,26 +270,33 @@ async def initialize_chatbot(request: InitializeRequest):
         session_id = request.session_id or generate_session_id()
         
         # Clean up existing session if it exists
-        if session_id in active_chatbots:
+        if session_id in active_agents:
             await cleanup_session(session_id)
         
         # Log the initialization attempt with the model name
-        app_logger.info(f"Initializing chatbot with model: {request.model_name}")
+        app_logger.info(f"Initializing agent with model: {request.model_name}")
         
-        # Create new chatbot
-        chatbot = await OllamaMCPPackage.create_standalone_chatbot(
+        # Create new agent using the new API with system prompt configuration
+        agent = await OllamaPackage.create_agent(
             model_name=request.model_name,
-            system_message=request.system_message
+            system_message=request.system_message,
+            session_id=session_id,
+            verbose=True,
+            use_config_system_prompt=True,  # Use configured system prompts by default
         )
         
+        # Add custom tools to the agent
+        from api.ollama_client import get_current_time, calculate
+        agent.add_tools([get_current_time, calculate])
+        
         # Store in active sessions
-        active_chatbots[session_id] = chatbot
+        active_agents[session_id] = agent
         
         # Save to database
         await db.create_session(
             session_id=session_id,
             model_name=request.model_name,
-            session_type="chatbot",
+            session_type="agent",
             system_message=request.system_message
         )
         
@@ -288,36 +307,36 @@ async def initialize_chatbot(request: InitializeRequest):
         )
     except ValueError as e:
         # Handle specific value errors
-        app_logger.error(f"Value error initializing chatbot: {str(e)}")
+        app_logger.error(f"Value error initializing agent: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
     except HTTPException as http_exc:
         # Re-raise HTTPExceptions directly so FastAPI handles them correctly
         raise http_exc
     except Exception as e:
-        app_logger.error(f"Error initializing chatbot: {str(e)}", exc_info=True)
+        app_logger.error(f"Error initializing agent: {str(e)}", exc_info=True)
         # Handle other unexpected errors as 500
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/chat/message", response_model=ChatResponse, tags=["Chat"])
 async def chat_message(request: ChatRequest):
     """
-    Send a message to a chatbot
+    Send a message to an agent
     
     - Requires a valid session_id from a previous /chat/initialize call
     - Returns the model's response to the user message
     - Saves the conversation history to the database
     """
-    if request.session_id not in active_chatbots:
+    if request.session_id not in active_agents:
         raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
     
     try:
-        chatbot = active_chatbots[request.session_id]
+        agent = active_agents[request.session_id]
         
         # Save user message to history
         await db.add_chat_message(request.session_id, "user", request.message)
         
-        # Get response from chatbot
-        response = await chatbot.chat(request.message)
+        # Get response from agent
+        response = await agent.chat(request.message)
         
         # Save assistant response to history
         await db.add_chat_message(request.session_id, "assistant", response)
@@ -336,94 +355,82 @@ async def chat_message(request: ChatRequest):
 @app.post("/chat/message/stream", tags=["Chat"])
 async def chat_message_stream(request: ChatRequest):
     """
-    Send a message to a chatbot and stream the response using SSE
+    Send a message to an agent and stream the response using SSE
     
     - Requires a valid session_id from a previous /chat/initialize call
     - Returns a streaming response from the model
     - Saves the conversation history to the database once completed
     """
-    if request.session_id not in active_chatbots:
+    if request.session_id not in active_agents:
         raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
     
     async def generate_stream() -> AsyncGenerator[str, None]:
         """Generate streaming response from Ollama"""
         try:
-            chatbot = active_chatbots[request.session_id]
+            agent = active_agents[request.session_id]
             
             # Save user message to history
             await db.add_chat_message(request.session_id, "user", request.message)
-            
-            # Set up variables to collect the full response
-            full_response = []
             
             # Log the request to help with debugging
             app_logger.info(f"Starting stream for message: {request.message[:50]}...")
             
             try:
-                # Use the chatbot's streaming method to get chunks directly from Ollama
-                async for chunk in chatbot.chat_stream(request.message):
-                    if chunk is None:
-                        app_logger.warning("Received None chunk from chat_stream")
-                        continue
+                # Try Agno's native streaming capabilities first
+                full_response = []
+                streamed_successfully = False
+                
+                try:
+                    # Get streaming response from Agno agent
+                    run_response = agent.agent.run(request.message, stream=True)
                     
-                    # Log the chunk format for debugging
-                    app_logger.debug(f"Received stream chunk: {str(chunk)[:100]}...")
+                    for chunk in run_response:
+                        if hasattr(chunk, 'content') and chunk.content:
+                            # Stream content in small chunks to preserve formatting but reduce overhead
+                            content = chunk.content
+                            full_response.append(content)
+                            
+                            # Split content into words but preserve spaces and newlines
+                            import re
+                            parts = re.findall(r'\S+|\s+', content)
+                            for part in parts:
+                                yield f"data: {json.dumps({'text': part})}\n\n"
+                                await asyncio.sleep(0.02)  # Small delay for streaming effect
+                            
+                            streamed_successfully = True
+                            
+                except Exception as stream_error:
+                    app_logger.warning(f"Agno streaming failed: {stream_error}, falling back to regular chat")
+                
+                # If Agno streaming didn't work, fall back to regular chat
+                if not streamed_successfully:
+                    app_logger.info("Using fallback streaming method")
+                    response = await agent.chat(request.message)
+                    full_response = [response]
                     
-                    # Extract the content from chunk depending on format
-                    if isinstance(chunk, dict):
-                        if 'message' in chunk and 'content' in chunk['message']:
-                            text = chunk['message']['content']
-                        elif 'content' in chunk:
-                            text = chunk['content']
-                        elif 'text' in chunk:
-                            text = chunk['text']
-                        else:
-                            app_logger.warning(f"Unrecognized chunk format: {chunk}")
-                            continue
-                    elif isinstance(chunk, str):
-                        text = chunk
-                    else:
-                        app_logger.warning(f"Unrecognized chunk type: {type(chunk)}")
-                        continue
-                    
-                    if not text:
-                        continue
-                        
-                    # Add to the full response
-                    full_response.append(text)
-                    
-                    # Log meaningful chunks for debugging
-                    if text.strip():
-                        app_logger.debug(f"Streaming chunk: {text}")
-                    
-                    # Send the chunk as an SSE event
-                    yield f"data: {json.dumps({'text': text})}\n\n"
+                    # Stream word by word while preserving all whitespace characters
+                    import re
+                    parts = re.findall(r'\S+|\s+', response)
+                    for part in parts:
+                        # Send all parts including spaces and newlines
+                        yield f"data: {json.dumps({'text': part})}\n\n"
+                        await asyncio.sleep(0.03)  # Slightly longer delay for fallback
+                
+                complete_response = ''.join(full_response)
+                
+                # Update session activity
+                await db.update_session_activity(request.session_id)
+                
+                # Save assistant response to history
+                await db.add_chat_message(request.session_id, "assistant", complete_response)
+                
+                # Send completion signal
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                
             except Exception as e:
                 app_logger.error(f"Error during streaming: {str(e)}", exc_info=True)
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
                 raise
-            
-            # Combine the full response for logging
-            complete_response = ''.join(full_response)
-            
-            # Log the complete response
-            if complete_response:
-                app_logger.info(f"Streamed complete response: {complete_response[:100]}...")
-            else:
-                app_logger.warning("No content received in stream - empty response")
-                # Add a fallback response if nothing was streamed
-                fallback_response = "I'm sorry, I couldn't generate a response. There might be an issue with the model."
-                yield f"data: {json.dumps({'text': fallback_response})}\n\n"
-                complete_response = fallback_response
-            
-            # Update session activity
-            await db.update_session_activity(request.session_id)
-            
-            # Save assistant response to history
-            await db.add_chat_message(request.session_id, "assistant", complete_response)
-            
-            # Send completion signal
-            yield f"data: {json.dumps({'done': True})}\n\n"
             
         except Exception as e:
             app_logger.error(f"Error streaming chat message: {str(e)}", exc_info=True)
@@ -434,107 +441,6 @@ async def chat_message_stream(request: ChatRequest):
         media_type="text/event-stream"
     )
 
-@app.post("/mcp/connect", response_model=InitializeResponse, tags=["MCP"])
-async def connect_to_mcp(request: MCPServerConnectRequest):
-    """
-    Connect to an MCP server
-    
-    - Supports both SSE and STDIO server types
-    - Creates a new MCP client with the specified model
-    - Returns a session ID for subsequent interactions
-    """
-    try:
-        session_id = request.session_id or generate_session_id()
-        
-        # Clean up existing session if it exists
-        if session_id in active_clients:
-            await cleanup_session(session_id)
-        
-        # Create MCP client
-        client = await OllamaMCPPackage.create_client(model_name=request.model_name)
-        
-        # Connect to server based on type
-        if request.server_type == "sse":
-            if not request.server_url:
-                raise HTTPException(status_code=400, detail="server_url is required for SSE connections")
-            
-            await client.connect_to_sse_server(server_url=request.server_url)
-        
-        elif request.server_type == "stdio":
-            if not request.command or not request.args:
-                raise HTTPException(status_code=400, detail="command and args are required for STDIO connections")
-            
-            await client.connect_to_stdio_server(command=request.command, args=request.args)
-        
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported server type: {request.server_type}")
-        
-        # Store in active clients
-        active_clients[session_id] = client
-        
-        # Save to database
-        await db.create_session(
-            session_id=session_id,
-            model_name=request.model_name,
-            session_type="mcp_client"
-        )
-        
-        return InitializeResponse(
-            session_id=session_id,
-            status="connected",
-            model=request.model_name
-        )
-    except HTTPException as http_exc:
-        # Re-raise HTTPExceptions directly so FastAPI handles them correctly
-        raise http_exc
-    except Exception as e:
-        app_logger.error(f"Error connecting to MCP server: {str(e)}")
-        # Handle other unexpected errors as 500
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.post("/mcp/query", response_model=ChatResponse)
-async def process_mcp_query(request: ChatRequest):
-    """Process a query with MCP tools"""
-    if request.session_id not in active_clients:
-        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
-    
-    try:
-        client = active_clients[request.session_id]
-        
-        # Process query
-        response = await client.process_query(request.message)
-        
-        return ChatResponse(
-            response=response,
-            session_id=request.session_id
-        )
-    except Exception as e:
-        app_logger.error(f"Error processing MCP query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing MCP query: {str(e)}")
-
-@app.post("/mcp/direct-query", response_model=ChatResponse)
-async def process_direct_query(request: ChatRequest):
-    """Process a direct query with Ollama (no MCP tools)"""
-    if request.session_id not in active_clients:
-        raise HTTPException(status_code=404, detail=f"Session {request.session_id} not found")
-    
-    try:
-        client = active_clients[request.session_id]
-        
-        # Set direct mode
-        client.direct_mode = True
-        
-        # Process direct query
-        response = await client.process_direct_query(request.message)
-        
-        return ChatResponse(
-            response=response,
-            session_id=request.session_id
-        )
-    except Exception as e:
-        app_logger.error(f"Error processing direct query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing direct query: {str(e)}")
-
 @app.get("/available-models", tags=["Models"])
 async def get_available_models():
     """
@@ -544,211 +450,11 @@ async def get_available_models():
     - Does not require an active session
     """
     try:
-        models = await OllamaMCPPackage.get_available_models()
+        models = await OllamaPackage.get_available_models()
         return {"models": models}
     except Exception as e:
         app_logger.error(f"Error getting available models: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting available models: {str(e)}")
-
-@app.get("/mcp/servers")
-async def get_mcp_servers():
-    """Get list of configured MCP servers"""
-    try:
-        config = await OllamaMCPPackage.load_mcp_config()
-        return {"servers": config.get("mcpServers", {})}
-    except Exception as e:
-        app_logger.error(f"Error getting MCP servers: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting MCP servers: {str(e)}")
-
-@app.post("/mcp/servers", tags=["MCP"])
-async def add_mcp_server(request: MCPServerAddRequest):
-    """
-    Add a new MCP server configuration
-    
-    - Adds a new server to the ollama_desktop_config.json file
-    - Supports both SSE and STDIO server types
-    - Returns updated list of configured servers
-    
-    Args:
-        request: Server configuration details
-    """
-    try:
-        # Validate the request based on server_type
-        if request.server_type == "sse":
-            if not request.server_url:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="server_url is required for SSE server type"
-                )
-        elif request.server_type == "stdio":
-            if not request.command:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="command is required for STDIO server type"
-                )
-            if not request.args or not isinstance(request.args, list):
-                raise HTTPException(
-                    status_code=400, 
-                    detail="args must be a non-empty list for STDIO server type"
-                )
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Unsupported server type: {request.server_type}. Must be 'sse' or 'stdio'."
-            )
-        
-        # Load current configuration
-        config = await OllamaMCPPackage.load_mcp_config()
-        
-        if not config:
-            config = {"mcpServers": {}}
-        elif "mcpServers" not in config:
-            config["mcpServers"] = {}
-            
-        # Check if server name already exists
-        if request.server_name in config["mcpServers"]:
-            raise HTTPException(
-                status_code=409, 
-                detail=f"Server with name '{request.server_name}' already exists"
-            )
-            
-        # Add new server configuration based on type
-        if request.server_type == "sse":
-            config["mcpServers"][request.server_name] = {
-                "type": "sse",
-                "url": request.server_url
-            }
-        else:  # stdio
-            config["mcpServers"][request.server_name] = {
-                "type": "stdio",
-                "command": request.command,
-                "args": request.args
-            }
-            
-        # Write updated configuration
-        success = await write_ollama_config(config)
-        
-        if not success:
-            raise HTTPException(
-                status_code=500, 
-                detail="Failed to write configuration file"
-            )
-            
-        # Return updated list of servers
-        return {"servers": config["mcpServers"], "message": f"Server '{request.server_name}' added successfully"}
-        
-    except HTTPException as http_exc:
-        # Re-raise HTTPExceptions directly
-        raise http_exc
-    except Exception as e:
-        app_logger.error(f"Error adding MCP server: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding MCP server: {str(e)}")
-
-@app.delete("/sessions/{session_id}", response_model=StatusResponse)
-async def delete_session(session_id: str, background_tasks: BackgroundTasks):
-    """Delete a session"""
-    session_in_memory = session_id in active_clients or session_id in active_chatbots
-    
-    # Check if session exists in memory or database
-    if not session_in_memory:
-        db_session = await db.get_session(session_id)
-        if not db_session:
-            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-        # Session exists in DB but not memory, still proceed with cleanup/deactivation
-        app_logger.info(f"Session {session_id} found in DB but not in active memory. Proceeding with deactivation.")
-
-    # Schedule cleanup to happen in the background
-    # The cleanup_session function will handle resource release and database deactivation
-    background_tasks.add_task(cleanup_session, session_id)
-    
-    # Determine current active sessions *before* cleanup potentially finishes
-    # This part remains tricky as the session might be removed by the background task immediately.
-    # We filter the list based on the current state, excluding the one being deleted.
-    current_active_sessions = list(set(list(active_clients.keys()) + list(active_chatbots.keys())))
-    if session_id in current_active_sessions:
-         # Exclude the session being deleted if it's still in the in-memory dicts
-         # Note: This is a snapshot, the background task might remove it shortly after.
-        current_active_sessions.remove(session_id)
-
-    return StatusResponse(
-        status="cleanup_scheduled",
-        active_sessions=current_active_sessions,
-        message=f"Session {session_id} scheduled for cleanup"
-    )
-
-@app.get("/sessions", response_model=StatusResponse, tags=["Sessions"])
-async def get_sessions():
-    """
-    Get all active sessions
-    
-    - Returns a list of all active session IDs
-    - Includes both chatbot and MCP client sessions
-    """
-    # Get active sessions from database
-    db_sessions = await db.get_active_sessions()
-    session_ids = [session["session_id"] for session in db_sessions]
-    
-    return StatusResponse(
-        status="ok",
-        active_sessions=session_ids
-    )
-
-@app.get("/chat/history/{session_id}", response_model=ChatHistoryResponse, tags=["Sessions"])
-async def get_chat_history(
-    session_id: str, 
-    limit: int = 100, 
-    offset: int = 0,
-    role: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-):
-    """
-    Get chat history for a session
-    
-    - Returns messages exchanged in the specified session
-    - Can be filtered by role ('user' or 'assistant')
-    - Can be filtered by date range
-    - Supports pagination with limit and offset parameters
-    
-    Args:
-        session_id: Unique identifier for the session
-        limit: Maximum number of messages to return (default: 100)
-        offset: Number of messages to skip for pagination (default: 0)
-        role: Filter messages by role ('user' or 'assistant'), if provided
-        start_date: Filter messages after this date (format: YYYY-MM-DD)
-        end_date: Filter messages before this date (format: YYYY-MM-DD)
-    """
-    # Check if session exists
-    session = await db.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-    
-    # Get chat history with filters
-    history = await db.get_filtered_chat_history(
-        session_id=session_id,
-        limit=limit,
-        offset=offset,
-        role=role,
-        start_date=start_date,
-        end_date=end_date
-    )
-    print(f"Chat history: {history}")
-    
-    return ChatHistoryResponse(
-        session_id=session_id,
-        history=history,
-        count=len(history)
-    )
-
-@app.get("/models/recent")
-async def get_recent_models(limit: int = 5):
-    """Get recently used models"""
-    try:
-        models = await db.get_recently_used_models(limit)
-        return {"models": models}
-    except Exception as e:
-        app_logger.error(f"Error getting recent models: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting recent models: {str(e)}")
 
 @app.get("/models", tags=["Models"])
 async def get_models():
@@ -769,7 +475,7 @@ async def get_models():
         app_logger.info("Fetching models directly from Ollama.")
         # 1. Get currently available models from Ollama
         # This function should ideally return List[Dict[str, Any]] or List[str]
-        available_models = await OllamaMCPPackage.get_available_models()
+        available_models = await OllamaPackage.get_available_models()
         app_logger.info(f"Available models fetched from Ollama: {available_models}")
 
         # 2. Format the models for the response (handle list of strings or dicts)
@@ -823,7 +529,7 @@ async def get_specific_model_info(model_name: str):
     """
     try:
         app_logger.info(f"Getting curated info for model: {model_name}")
-        model_info = await OllamaMCPPackage.get_model_info(model_name)
+        model_info = await OllamaPackage.get_model_info(model_name)
 
         if not model_info:
             # The underlying function returns {} if model not found or on error
@@ -945,117 +651,15 @@ async def search_chats(
         app_logger.error(f"Error searching chats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error searching chats: {str(e)}")
 
-@app.get("/mcp/servers/active", tags=["MCP"])
-async def get_active_mcp_servers():
-    """Get list of active MCP servers"""
+@app.get("/models/recent")
+async def get_recent_models(limit: int = 5):
+    """Get recently used models"""
     try:
-        # Get list of active servers from database
-        active_servers = await db.get_active_mcp_servers()
-        return {"active_servers": active_servers}
+        models = await db.get_recently_used_models(limit)
+        return {"models": models}
     except Exception as e:
-        app_logger.error(f"Error getting active MCP servers: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting active MCP servers: {str(e)}")
-
-@app.post("/mcp/servers/toggle-active/{server_name}", tags=["MCP"])
-async def toggle_mcp_server_active(server_name: str, active: bool):
-    """Activate or deactivate an MCP server"""
-    try:
-        # Update server active status in database
-        success = await db.set_mcp_server_active(server_name, active)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Server {server_name} not found")
-        
-        # Get updated list of active servers
-        active_servers = await db.get_active_mcp_servers()
-        return {"active": active, "server_name": server_name, "active_servers": active_servers}
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        app_logger.error(f"Error toggling MCP server active status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error toggling MCP server active status: {str(e)}")
-
-@app.post("/chat/initialize-with-mcp", response_model=InitializeResponse, tags=["Chat"])
-async def initialize_chat_with_mcp(request: InitializeRequest):
-    """
-    Initialize a chat with active MCP servers if available, otherwise create a regular chat
-    
-    - Checks for active MCP servers
-    - If active servers exist, creates a chat with MCP integration
-    - If no active servers, falls back to regular chat
-    """
-    try:
-        # Validate model name is not empty
-        if not request.model_name or request.model_name.strip() == "":
-            raise HTTPException(status_code=400, detail="Model name cannot be empty")
-        
-        session_id = request.session_id or generate_session_id()
-        
-        # Clean up existing session if it exists
-        if session_id in active_chatbots or session_id in active_clients:
-            await cleanup_session(session_id)
-        
-        # Get active MCP servers
-        active_servers = await db.get_active_mcp_servers()
-        
-        # If there are active MCP servers, use them
-        if active_servers:
-            app_logger.info(f"Initializing chat with active MCP servers: {active_servers}")
-            
-            # Get the first active server config for now (in future could support multiple)
-            server_config = await OllamaMCPPackage.get_mcp_server_config(active_servers[0])
-            
-            if not server_config:
-                app_logger.warning(f"No config found for active server {active_servers[0]}, falling back to regular chat")
-                return await initialize_chatbot(request)
-            
-            # Create MCP client
-            client = await OllamaMCPPackage.create_client(model_name=request.model_name)
-            
-            # Connect to server based on type
-            server_type = server_config.get('type', 'stdio')
-            
-            if server_type == "sse":
-                server_url = server_config.get('url')
-                if not server_url:
-                    raise HTTPException(status_code=400, detail="Server URL not found in config")
-                
-                await client.connect_to_sse_server(server_url=server_url)
-            
-            elif server_type == "stdio":
-                command = server_config.get('command')
-                args = server_config.get('args', [])
-                
-                if not command:
-                    raise HTTPException(status_code=400, detail="Command not found in config")
-                
-                await client.connect_to_stdio_server(command=command, args=args)
-            
-            # Store in active clients
-            active_clients[session_id] = client
-            
-            # Save to database
-            await db.create_session(
-                session_id=session_id,
-                model_name=request.model_name,
-                session_type="mcp_client",
-                system_message=request.system_message
-            )
-            
-            return InitializeResponse(
-                session_id=session_id,
-                status="connected_with_mcp",
-                model=request.model_name
-            )
-        else:
-            # No active MCP servers, fall back to regular chat
-            app_logger.info("No active MCP servers, initializing regular chat")
-            return await initialize_chatbot(request)
-            
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        app_logger.error(f"Error initializing chat with MCP: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        app_logger.error(f"Error getting recent models: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting recent models: {str(e)}")
 
 @app.post("/sessions/{session_id}/upload_file", tags=["Context"])
 async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
@@ -1064,21 +668,14 @@ async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
 
     - Validates the session ID and file type.
     - Saves the file temporarily.
-    - Processes the file content and adds it to the session's vector store.
+    - Processes the file content and adds it to the session's context.
     - Cleans up the temporary file.
     """
-    chatbot: Optional[OllamaChatbot] = None
+    agent: Optional[OllamaAgent] = None
 
-    # Check if session exists in either active_chatbots or active_clients
-    if session_id in active_chatbots:
-        chatbot = active_chatbots[session_id]
-    elif session_id in active_clients:
-        # MCPClient has an internal chatbot instance
-        client = active_clients[session_id]
-        if hasattr(client, 'chatbot') and isinstance(client.chatbot, OllamaChatbot):
-            chatbot = client.chatbot
-        else:
-             raise HTTPException(status_code=400, detail=f"Session {session_id} is an MCP client without a compatible chatbot instance.")
+    # Check if session exists in active_agents
+    if session_id in active_agents:
+        agent = active_agents[session_id]
     else:
         # Verify if the session exists in the database but isn't active in memory
         db_session = await db.get_session(session_id)
@@ -1090,8 +687,8 @@ async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
         else:
              raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
 
-    if not chatbot:
-         raise HTTPException(status_code=500, detail=f"Could not retrieve chatbot instance for session {session_id}.")
+    if not agent:
+         raise HTTPException(status_code=500, detail=f"Could not retrieve agent instance for session {session_id}.")
 
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
@@ -1117,9 +714,9 @@ async def upload_file_to_session(session_id: str, file: UploadFile = File(...)):
              # Ensure the file pointer is closed, even if copyfileobj fails
              file.file.close()
 
-        # Process the file using the chatbot's method
+        # Process the file using the agent's method
         try:
-            await chatbot.add_file_context(temp_file_path, file.filename)
+            await agent.add_file_context(temp_file_path, file.filename)
             app_logger.info(f"Successfully processed file context for session {session_id} from {file.filename}")
             return {"message": f"File '{file.filename}' processed and added to context for session {session_id}"}
         except FileNotFoundError as e:
@@ -1152,15 +749,9 @@ async def chat_vision(
     - Requires a valid session_id from a previous /chat/initialize call
     - Accepts multiple images.
     """
-    # Retrieve chatbot instance
-    if session_id in active_chatbots:
-        chatbot = active_chatbots[session_id]
-    elif session_id in active_clients:
-        client = active_clients[session_id]
-        if hasattr(client, 'chatbot') and isinstance(client.chatbot, OllamaChatbot):
-            chatbot = client.chatbot
-        else:
-            raise HTTPException(status_code=400, detail=f"Session {session_id} is an MCP client without a compatible chatbot instance.")
+    # Retrieve agent instance
+    if session_id in active_agents:
+        agent = active_agents[session_id]
     else:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     # Save user message and update activity
@@ -1175,7 +766,7 @@ async def chat_vision(
                 shutil.copyfileobj(file.file, buffer)
             temp_image_paths.append(str(temp_path))
         # Call the vision chat method
-        response_content = await chatbot.chat_with_image(message, temp_image_paths)
+        response_content = await agent.chat_with_image(message, temp_image_paths)
     # Save assistant response
     await db.add_chat_message(session_id, "assistant", response_content)
     await db.update_session_activity(session_id)
@@ -1211,7 +802,7 @@ async def pull_model_endpoint(model_name: str, stream: bool = True):
     Pull the specified Ollama model and stream progress updates as newline-delimited JSON.
     """
     def iter_progress():
-        for progress in OllamaMCPPackage.pull_model(model_name, stream=stream):
+        for progress in OllamaPackage.pull_model(model_name, stream=stream):
             # Convert to plain dict for JSON serialization
             if isinstance(progress, dict):
                 progress_data = progress
@@ -1225,6 +816,189 @@ async def pull_model_endpoint(model_name: str, stream: bool = True):
             # Fallback to default=str for any non-serializable values
             yield json.dumps(progress_data, default=str) + "\n"
     return StreamingResponse(iter_progress(), media_type="application/x-ndjson")
+
+# ----- System Prompt Endpoints -----
+
+@app.get("/system-prompts", response_model=SystemPromptsResponse, tags=["System Prompts"])
+async def get_system_prompts():
+    """
+    Get all available system prompts and the currently active one.
+    
+    Returns a list of all configured system prompts along with the ID of the active prompt.
+    """
+    try:
+        # Get all system prompts
+        all_prompts = get_all_system_prompts()
+        
+        # Get active prompt ID
+        config = read_ollama_config()
+        active_prompt_id = config.get("activeSystemPrompt", "default") if config else "default"
+        
+        # Convert to response format
+        prompts = []
+        for prompt_id, prompt_config in all_prompts.items():
+            prompts.append(SystemPrompt(
+                id=prompt_id,
+                config=SystemPromptConfig(**prompt_config)
+            ))
+        
+        return SystemPromptsResponse(
+            prompts=prompts,
+            active_prompt_id=active_prompt_id
+        )
+    except Exception as e:
+        app_logger.error(f"Error getting system prompts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting system prompts: {str(e)}")
+
+@app.get("/system-prompts/active", response_model=SystemPrompt, tags=["System Prompts"])
+async def get_active_system_prompt_endpoint():
+    """
+    Get the currently active system prompt configuration.
+    
+    Returns the configuration of the system prompt that is currently active.
+    """
+    try:
+        # Get active prompt config
+        active_config = get_active_system_prompt()
+        if not active_config:
+            raise HTTPException(status_code=404, detail="No active system prompt found")
+        
+        # Get the active prompt ID
+        config = read_ollama_config()
+        active_prompt_id = config.get("activeSystemPrompt", "default") if config else "default"
+        
+        return SystemPrompt(
+            id=active_prompt_id,
+            config=SystemPromptConfig(**active_config)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error getting active system prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting active system prompt: {str(e)}")
+
+@app.post("/system-prompts/active", tags=["System Prompts"])
+async def set_active_system_prompt_endpoint(request: SetActivePromptRequest):
+    """
+    Set the active system prompt.
+    
+    Changes which system prompt is currently active for new agent sessions.
+    Existing sessions will continue using their original prompt until reinitialized.
+    """
+    try:
+        success = set_active_system_prompt(request.prompt_id)
+        if not success:
+            raise HTTPException(status_code=400, detail=f"Failed to set active system prompt to '{request.prompt_id}'")
+        
+        app_logger.info(f"Set active system prompt to: {request.prompt_id}")
+        return {"status": "success", "message": f"Active system prompt set to '{request.prompt_id}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error setting active system prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error setting active system prompt: {str(e)}")
+
+@app.post("/system-prompts", tags=["System Prompts"])
+async def save_system_prompt_endpoint(request: SavePromptRequest):
+    """
+    Save a system prompt configuration.
+    
+    Creates a new system prompt or updates an existing one with the provided configuration.
+    The prompt can then be activated and used for new agent sessions.
+    """
+    try:
+        # Convert Pydantic model to dict
+        prompt_config = request.config.model_dump()
+        
+        success = save_system_prompt(request.prompt_id, prompt_config)
+        if not success:
+            raise HTTPException(status_code=400, detail=f"Failed to save system prompt '{request.prompt_id}'")
+        
+        app_logger.info(f"Saved system prompt: {request.prompt_id}")
+        return {"status": "success", "message": f"System prompt '{request.prompt_id}' saved successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error saving system prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error saving system prompt: {str(e)}")
+
+@app.get("/system-prompts/{prompt_id}", response_model=SystemPrompt, tags=["System Prompts"])
+async def get_system_prompt_by_id(prompt_id: str):
+    """
+    Get a specific system prompt by ID.
+    
+    Returns the configuration of the specified system prompt.
+    """
+    try:
+        all_prompts = get_all_system_prompts()
+        if prompt_id not in all_prompts:
+            raise HTTPException(status_code=404, detail=f"System prompt '{prompt_id}' not found")
+        
+        prompt_config = all_prompts[prompt_id]
+        return SystemPrompt(
+            id=prompt_id,
+            config=SystemPromptConfig(**prompt_config)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error getting system prompt '{prompt_id}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting system prompt: {str(e)}")
+
+@app.delete("/system-prompts/{prompt_id}", tags=["System Prompts"])
+async def delete_system_prompt_endpoint(prompt_id: str):
+    """
+    Delete a system prompt configuration.
+    
+    Removes the specified system prompt. Cannot delete the 'default' prompt.
+    If the deleted prompt was active, the system will switch back to 'default'.
+    """
+    try:
+        if prompt_id == "default":
+            raise HTTPException(status_code=400, detail="Cannot delete the default system prompt")
+        
+        success = delete_system_prompt(prompt_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"System prompt '{prompt_id}' not found or could not be deleted")
+        
+        app_logger.info(f"Deleted system prompt: {prompt_id}")
+        return {"status": "success", "message": f"System prompt '{prompt_id}' deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error deleting system prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting system prompt: {str(e)}")
+
+@app.post("/sessions/{session_id}/update-prompt", tags=["System Prompts"])
+async def update_session_system_prompt(session_id: str, request: SetActivePromptRequest):
+    """
+    Update the system prompt for an active session.
+    
+    Changes the system prompt for an existing session. The session must be active in memory.
+    This allows users to change the behavior of an ongoing conversation.
+    """
+    try:
+        if session_id not in active_agents:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found or not active")
+        
+        # Get the prompt configuration
+        all_prompts = get_all_system_prompts()
+        if request.prompt_id not in all_prompts:
+            raise HTTPException(status_code=404, detail=f"System prompt '{request.prompt_id}' not found")
+        
+        prompt_config = all_prompts[request.prompt_id]
+        
+        # Update the agent's system prompt
+        agent = active_agents[session_id]
+        agent.update_system_prompt(prompt_config)
+        
+        app_logger.info(f"Updated system prompt for session {session_id} to: {request.prompt_id}")
+        return {"status": "success", "message": f"Session {session_id} updated to use system prompt '{request.prompt_id}'"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error updating session system prompt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating session system prompt: {str(e)}")
 
 @app.post("/cleanup")
 async def cleanup_endpoint():
@@ -1411,10 +1185,101 @@ def ensure_ollama_running():
         app_logger.error(f"Failed to start Ollama: {str(e)}")
         return False
 
+@app.delete("/sessions/{session_id}", response_model=StatusResponse)
+async def delete_session(session_id: str, background_tasks: BackgroundTasks):
+    """Delete a session"""
+    session_in_memory = session_id in active_agents
+    
+    # Check if session exists in memory or database
+    if not session_in_memory:
+        db_session = await db.get_session(session_id)
+        if not db_session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        # Session exists in DB but not memory, still proceed with cleanup/deactivation
+        app_logger.info(f"Session {session_id} found in DB but not in active memory. Proceeding with deactivation.")
+
+    # Schedule cleanup to happen in the background
+    # The cleanup_session function will handle resource release and database deactivation
+    background_tasks.add_task(cleanup_session, session_id)
+    
+    # Determine current active sessions *before* cleanup potentially finishes
+    # This part remains tricky as the session might be removed by the background task immediately.
+    # We filter the list based on the current state, excluding the one being deleted.
+    current_active_sessions = list(active_agents.keys())
+    if session_id in current_active_sessions:
+         # Exclude the session being deleted if it's still in the in-memory dicts
+         # Note: This is a snapshot, the background task might remove it shortly after.
+        current_active_sessions.remove(session_id)
+
+    return StatusResponse(
+        status="cleanup_scheduled",
+        active_sessions=current_active_sessions,
+        message=f"Session {session_id} scheduled for cleanup"
+    )
+
+@app.get("/sessions", response_model=StatusResponse, tags=["Sessions"])
+async def get_sessions():
+    """
+    Get all active sessions
+    
+    - Returns a list of all active session IDs
+    - Includes chatbot sessions
+    """
+    # Get active sessions from database
+    db_sessions = await db.get_active_sessions()
+    session_ids = [session["session_id"] for session in db_sessions]
+    
+    return StatusResponse(
+        status="ok",
+        active_sessions=session_ids
+    )
+
+@app.get("/chat/history/{session_id}", response_model=ChatHistoryResponse, tags=["Sessions"])
+async def get_chat_history(
+    session_id: str, 
+    limit: int = 100, 
+    offset: int = 0,
+    role: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """
+    Get chat history for a session
+    
+    - Returns messages exchanged in the specified session
+    - Can be filtered by role ('user' or 'assistant')
+    - Can be filtered by date range
+    - Supports pagination with limit and offset parameters
+    
+    Args:
+        session_id: Unique identifier for the session
+        limit: Maximum number of messages to return (default: 100)
+        offset: Number of messages to skip for pagination (default: 0)
+        role: Filter messages by role ('user' or 'assistant'), if provided
+        start_date: Filter messages after this date (format: YYYY-MM-DD)
+        end_date: Filter messages before this date (format: YYYY-MM-DD)
+    """
+    # Check if session exists
+    session = await db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    
+    # Get chat history with filters
+    history = await db.get_filtered_chat_history(
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+        role=role,
+        start_date=start_date,
+        end_date=end_date
+    )
+    
+    return ChatHistoryResponse(
+        session_id=session_id,
+        history=history,
+        count=len(history)
+    )
+
 if __name__ == "__main__":
     # Start the FastAPI server and frontend
-    start_server()    
-    # Examples of programmatic usage are defined above
-    # To run them directly:
-    # asyncio.run(example_standalone())
-    # asyncio.run(example_with_mcp())
+    start_server()

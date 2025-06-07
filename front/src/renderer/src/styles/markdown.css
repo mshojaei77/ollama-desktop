@@ -3,6 +3,7 @@
   font-size: 1rem;
   line-height: 1.5;
   overflow-wrap: break-word;
+  white-space: pre-wrap; /* Preserve whitespace and newlines */
 }
 
 .markdown-content h1 {
@@ -35,6 +36,7 @@
 
 .markdown-content p {
   margin: 0.8rem 0;
+  white-space: pre-wrap; /* Ensure paragraphs also preserve whitespace */
 }
 
 .markdown-content blockquote {

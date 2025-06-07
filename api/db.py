@@ -1,17 +1,21 @@
 """
-Database module for Ollama MCP API
+Database module for Ollama Desktop API
 Handles SQLite database operations for storing settings, models, sessions, and chat history
 """
 
 import os
 import json
 import sqlite3
-import datetime
 from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
-import logging
+from pathlib import Path
+import sys
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 from api.config_io import read_ollama_config
-from api.ollama_desktop_api_server import app_logger
+from api.logger import app_logger
+from datetime import datetime
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ollama_desktop.db")
@@ -41,7 +45,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT UNIQUE NOT NULL,
     model_name TEXT NOT NULL,
-    session_type TEXT NOT NULL,  -- 'chatbot' or 'mcp_client'
+    session_type TEXT NOT NULL,  -- 'chatbot'
     system_message TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -56,13 +60,6 @@ CREATE TABLE IF NOT EXISTS chat_history (
     message TEXT NOT NULL,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-
--- MCP server status table
-CREATE TABLE IF NOT EXISTS mcp_server_status (
-    server_name TEXT PRIMARY KEY,
-    is_active BOOLEAN DEFAULT 0,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -467,124 +464,34 @@ async def search_chats(
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
-# ----- Database migration functions -----
+# ----- Migrations for future changes -----
 
 def check_column_exists(conn, table, column):
-    """Check if a column exists in the given table"""
+    """Check if a column exists in a table"""
     cursor = conn.cursor()
     cursor.execute(f"PRAGMA table_info({table})")
     columns = cursor.fetchall()
-    return any(col['name'] == column for col in columns)
+    return any(col["name"] == column for col in columns)
 
 def add_column_if_not_exists(conn, table, column, type_definition):
     """Add a column to a table if it doesn't exist"""
     if not check_column_exists(conn, table, column):
         cursor = conn.cursor()
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_definition}")
-        return True
-    return False
+        conn.commit()
 
 def migrate_database():
     """Apply database migrations"""
     conn = get_db_connection()
     try:
-        # Add last_used column to models table if it doesn't exist
-        if add_column_if_not_exists(conn, "models", "last_used", "TIMESTAMP"):
-            print("Migration: Added 'last_used' column to models table")
+        # Example migration (add columns if they don't exist)
+        add_column_if_not_exists(conn, "settings", "description", "TEXT")
         
-        # Add any future migrations here
-        
-        conn.commit()
-        print("Database migration completed successfully")
-    except Exception as e:
-        conn.rollback()
-        print(f"Error during database migration: {str(e)}")
+        # You can add more migrations here as needed
+        # For example, to add a new column to an existing table:
+        # add_column_if_not_exists(conn, "sessions", "new_column", "TEXT DEFAULT NULL")
     finally:
         conn.close()
-
-# Add these functions to the database module
-
-async def get_active_mcp_servers():
-    """Get list of active MCP server names"""
-    conn = await get_db_connection()
-    try:
-        # Check if table exists
-        table_exists = await conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
-        )
-        if not await table_exists.fetchone():
-            # Create table if it doesn't exist
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS mcp_server_status (
-                    server_name TEXT PRIMARY KEY,
-                    is_active BOOLEAN DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            await conn.commit()
-            return []
-        
-        # Get active servers
-        cursor = await conn.execute(
-            "SELECT server_name FROM mcp_server_status WHERE is_active = 1"
-        )
-        active_servers = [row[0] for row in await cursor.fetchall()]
-        return active_servers
-    finally:
-        await conn.close()
-
-async def set_mcp_server_active(server_name, is_active):
-    """Set MCP server active status"""
-    if not server_name:
-        return False
-    
-    conn = await get_db_connection()
-    try:
-        # Check if table exists
-        table_exists = await conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_server_status'"
-        )
-        if not await table_exists.fetchone():
-            # Create table if it doesn't exist
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS mcp_server_status (
-                    server_name TEXT PRIMARY KEY,
-                    is_active BOOLEAN DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-        
-        # Update or insert server status
-        await conn.execute(
-            """
-            INSERT INTO mcp_server_status (server_name, is_active, last_updated)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(server_name) DO UPDATE SET
-                is_active = ?,
-                last_updated = CURRENT_TIMESTAMP
-            """,
-            (server_name, 1 if is_active else 0, 1 if is_active else 0)
-        )
-        await conn.commit()
-        return True
-    finally:
-        await conn.close()
-
-# Add a method to OllamaMCPPackage to get server config by name
-async def get_mcp_server_config(server_name):
-    """Get MCP server configuration by name"""
-    if not server_name:
-        return None
-    
-    try:
-        config = await read_ollama_config()
-        if not config or "mcpServers" not in config:
-            return None
-        
-        return config["mcpServers"].get(server_name)
-    except Exception as e:
-        app_logger.error(f"Error getting MCP server config: {str(e)}")
-        return None
 
 if __name__ == "__main__":
     print("Initializing database...")

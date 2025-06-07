@@ -14,7 +14,6 @@ import {
   ModelsResponse,
   ChatHistoryResponse,
   AvailableChatsResponse,
-  MCPServersResponse,
   ModelInfo,
   ModelDetails
 } from './types'
@@ -136,14 +135,19 @@ const createFetchStream = (
                   const data = JSON.parse(jsonStr)
                   console.log('Parsed response data:', data)
 
-                  if (data.text) {
-                    console.log('Received text chunk:', data.text)
+                  if (data.text !== undefined) {
+                    // Log only non-empty chunks to avoid spam
+                    if (data.text.trim()) {
+                      console.log('Received text chunk:', JSON.stringify(data.text))
+                    }
                     fullResponse += data.text
                     onChunk(data.text)
                     processedAny = true
-                  } else if (data.response) {
+                  } else if (data.response !== undefined) {
                     // Some APIs might use 'response' instead of 'text'
-                    console.log('Received response chunk:', data.response)
+                    if (data.response.trim()) {
+                      console.log('Received response chunk:', JSON.stringify(data.response))
+                    }
                     fullResponse += data.response
                     onChunk(data.response)
                     processedAny = true
@@ -213,14 +217,18 @@ const sendMessage = async (
         session_id: params.session_id
       },
       (chunk) => {
-        if (chunk && chunk.trim()) {
+        // Always process chunks, even if they're just whitespace (important for formatting)
+        if (chunk !== undefined && chunk !== null) {
           hasReceivedValidData = true;
           if (onStreamUpdate) {
-            console.log('Calling stream update with chunk length:', chunk.length)
+            // Only log non-whitespace chunks to reduce noise
+            if (chunk.trim()) {
+              console.log('Calling stream update with chunk:', JSON.stringify(chunk))
+            }
             onStreamUpdate(chunk)
           }
         } else {
-          console.warn('Received empty chunk from API')
+          console.warn('Received null/undefined chunk from API')
         }
       }
     )
@@ -448,23 +456,6 @@ export const useSearchChats = (
     queryKey: ['searchChats', query, includeInactive, limit, offset],
     queryFn: () => searchChats(query, includeInactive, limit, offset),
     enabled: !!query && query.trim().length > 0
-  })
-}
-
-const fetchMCPServers = async (): Promise<MCPServersResponse> => {
-  try {
-    const { data } = await apiClient.get<MCPServersResponse>('/mcp/servers')
-    return data
-  } catch (error) {
-    console.error('Error fetching MCP servers:', error)
-    throw new Error('Failed to fetch MCP servers. Please try again.')
-  }
-}
-
-export const useMCPServers = (): UseQueryResult<MCPServersResponse, Error> => {
-  return useQuery({
-    queryKey: ['mcpServers'],
-    queryFn: fetchMCPServers
   })
 }
 

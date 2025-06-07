@@ -1,6 +1,9 @@
 import sys
 import os
 import inspect
+import asyncio
+from typing import Optional, List, Dict, Any, Union
+from pathlib import Path
 
 # Determine the absolute path of the current script
 try:
@@ -17,134 +20,28 @@ project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Now proceed with imports that rely on the project structure
-# pip install "mcp==1.3.0" langchain-ollama langchain-core
+# Core Agno framework imports - using basic features only
+from agno.agent import Agent
+from agno.models.openai.like import OpenAILike
+from agno.tools import tool
 
-import asyncio
-import json
-import os
-from typing import Optional, List, Dict, Any, Union, Callable, AsyncGenerator
-from contextlib import AsyncExitStack
-import logging
-from pathlib import Path
-import tempfile
-import shutil
-
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.sse import sse_client
-from mcp.client.stdio import stdio_client
-
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage,
-    ChatMessage,
-    FunctionMessage,
-    ToolMessage,
-    BaseMessage
-)
-from langchain_core.messages import AIMessageChunk, ToolCall
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.outputs import ChatGeneration, ChatResult, ChatGenerationChunk
-from langchain_core.tools import BaseTool, Tool, tool
-from langchain_ollama import ChatOllama
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain.memory import ConversationBufferMemory
 from dotenv import load_dotenv
-import anyio
-from tqdm import tqdm # Added import
 
 # Import the logger
 from api.logger import app_logger
-from api.config_io import read_ollama_config
-
-# Added imports for RAG
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_community.docstore.document import Document
-
-# Added import for PDF processing
-try:
-    import pypdf
-except ImportError:
-    pypdf = None # Handle optional dependency
+from api.config_io import read_ollama_config, get_active_system_prompt
 
 # Import embedding models scraper function
 from api.scrape_ollama import fetch_embedding_models
 
 load_dotenv()  # load environment variables from .env
 
-class BaseChatbot:
-    """Base class for chatbot implementations"""
 
-    def __init__(
-        self,
-        model_name: str = "llama3.2",
-        vision_model_name: str = "granite3.2-vision",
-        system_message: Optional[str] = None,
-        verbose: bool = False,
-    ):
-        """
-        Initialize the base chatbot.
-
-        Args:
-            model_name: Name of the model to use
-            system_message: Optional system message to set context
-            verbose: Whether to output verbose logs
-        """
-        self.model_name = model_name
-        self.system_message = system_message
-        self.verbose = verbose
-        self.memory = ConversationBufferMemory(return_messages=True)
-        # Added vector store attribute
-        self.vector_store: Optional[FAISS] = None
-        self.vector_store_path: Optional[Path] = None # Store path for persistence if needed
-        # Store the vision model name
-        self.vision_model_name = vision_model_name
-
-    async def initialize(self) -> None:
-        """Initialize the chatbot - to be implemented by subclasses"""
-        raise NotImplementedError("Subclasses must implement initialize()")
-
-    async def chat(self, message: str) -> str:
-        """Process a chat message and return the response"""
-        raise NotImplementedError("Subclasses must implement chat()")
-
-    async def cleanup(self) -> None:
-        """Clean up any resources used by the chatbot"""
-        # Base implementation resets memory
-        self.memory = ConversationBufferMemory(return_messages=True)
-        # Clean up vector store if it exists and was stored temporarily
-        if self.vector_store_path and self.vector_store_path.exists():
-             try:
-                 # Check if it's a directory before removing
-                 if self.vector_store_path.is_dir():
-                     shutil.rmtree(self.vector_store_path)
-                     app_logger.info(f"Removed temporary vector store at {self.vector_store_path}")
-                 elif self.vector_store_path.is_file():
-                    # FAISS can also save as a single file with .faiss extension
-                    self.vector_store_path.unlink()
-                    app_logger.info(f"Removed temporary vector store file at {self.vector_store_path}")
-
-             except Exception as e:
-                 app_logger.error(f"Error removing vector store at {self.vector_store_path}: {e}")
-        self.vector_store = None
-        self.vector_store_path = None
-
-    def get_history(self) -> List[BaseMessage]:
-        """Get the conversation history"""
-        memory_variables = self.memory.load_memory_variables({})
-        return memory_variables.get("history", [])
-
-    def clear_history(self) -> None:
-        """Clear the conversation history"""
-        self.memory.clear()
-
-
-class OllamaChatbot(BaseChatbot):
-    """Chatbot implementation using Ollama and LangChain"""
+class OllamaAgent:
+    """
+    Simplified Ollama Agent using core Agno framework features with advanced prompt system.
+    Supports user-configurable system prompts using Agno's description and instructions.
+    """
 
     def __init__(
         self,
@@ -155,1119 +52,511 @@ class OllamaChatbot(BaseChatbot):
         temperature: float = 0.7,
         top_p: float = 0.9,
         verbose: bool = False,
-        # Added embedding model parameter
-        embedding_model_name: str = "nomic-embed-text",
-        # Added text splitter parameters
-        chunk_size: int = 1000,
-        chunk_overlap: int = 100,
+        user_id: str = "default",
+        session_id: Optional[str] = None,
+        use_config_system_prompt: bool = True,
     ):
         """
-        Initialize the Ollama chatbot.
+        Initialize the Ollama Agent using core Agno framework features with advanced prompting.
 
         Args:
             model_name: Name of the Ollama model to use
             vision_model_name: Name of the Ollama vision model to use
-            system_message: Optional system message to set context
+            system_message: Optional system message to override config (legacy support)
             base_url: Base URL for the Ollama API (default: http://localhost:11434)
             temperature: Temperature parameter for generation
             top_p: Top-p parameter for generation
             verbose: Whether to output verbose logs
-            embedding_model_name: Name of the Ollama embedding model to use
-            chunk_size: Size of text chunks for vector store
-            chunk_overlap: Overlap between text chunks
+            user_id: User ID for the agent
+            session_id: Session ID for conversations
+            use_config_system_prompt: Whether to use configured system prompts instead of system_message
         """
-        super().__init__(model_name, vision_model_name, system_message, verbose)
+        self.model_name = model_name
+        self.vision_model_name = vision_model_name
+        self.system_message = system_message
         self.base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.temperature = temperature
         self.top_p = top_p
-        self.chat_model = None
-        self.ready = False
-        # Initialize embeddings and text splitter
-        self.embedding_model_name = embedding_model_name
-        self.embeddings = OllamaEmbeddings(model=self.embedding_model_name, base_url=self.base_url)
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=['\n\n', '\n', '. ', ' ', ''] # More robust separators
-        )
-        self._temp_dir_for_vs = None # To hold temp directory object
-        # Store the vision model name
-        self.vision_model_name = vision_model_name
+        self.verbose = verbose
+        self.user_id = user_id
+        self.session_id = session_id
+        self.use_config_system_prompt = use_config_system_prompt
 
-    async def initialize(self) -> None:
-        """Initialize the Ollama chatbot"""
-        try:
-            # Create ChatOllama instance using latest API
-            self.chat_model = ChatOllama(
-                model=self.model_name,
-                base_url=self.base_url,
+        # Ensure the base URL doesn't include /v1 (Agno handles this)
+        if self.base_url.endswith('/v1'):
+            self.base_url = self.base_url.rstrip('/v1')
+
+        # Initialize Ollama model for chat
+        self.model = OpenAILike(
+            id=self.model_name,
+            api_key="ollama",  # Required but unused by Ollama
+            base_url=f"{self.base_url}/v1",
+            temperature=self.temperature,
+            top_p=self.top_p,
+        )
+
+        # Initialize vision model if different
+        self.vision_model = None
+        if self.vision_model_name and self.vision_model_name != self.model_name:
+            self.vision_model = OpenAILike(
+                id=self.vision_model_name,
+                api_key="ollama",
+                base_url=f"{self.base_url}/v1",
                 temperature=self.temperature,
                 top_p=self.top_p,
-                streaming=True
             )
 
-            # Skip test connection for now
-            if self.verbose:
-                app_logger.info(f"Initializing Ollama with model: {self.model_name}")
+        # Get system prompt configuration
+        prompt_config = self._get_system_prompt_config()
 
-            # Set ready flag
-            self.ready = True
+        # Initialize the Agno agent with advanced prompt configuration
+        self.agent = Agent(
+            model=self.model,
+            user_id=self.user_id,
+            session_id=self.session_id,
+            description=prompt_config.get("description", ""),
+            instructions=prompt_config.get("instructions", []),
+            additional_context=prompt_config.get("additional_context", ""),
+            expected_output=prompt_config.get("expected_output", ""),
+            markdown=prompt_config.get("markdown", True),
+            add_datetime_to_instructions=prompt_config.get("add_datetime_to_instructions", False),
+            show_tool_calls=self.verbose,
+            debug_mode=self.verbose,
+            tools=[],  # Initialize with empty tools list
+        )
 
-            # Set system message if provided
-            if self.system_message:
-                # Check if memory already has messages to avoid duplication on re-init
-                current_history = self.memory.chat_memory.messages
-                if not current_history or not isinstance(current_history[0], SystemMessage):
-                     self.memory.chat_memory.add_message(SystemMessage(content=self.system_message))
-                elif isinstance(current_history[0], SystemMessage) and current_history[0].content != self.system_message:
-                     # Replace existing system message if different
-                     current_history[0] = SystemMessage(content=self.system_message)
+        if self.verbose:
+            app_logger.info(f"Initialized Ollama Agent with model: {self.model_name}")
+            app_logger.info(f"Base URL: {self.base_url}")
+            app_logger.info(f"Using system prompt: {prompt_config.get('name', 'Custom')}")
 
+    def _get_system_prompt_config(self) -> Dict[str, Any]:
+        """
+        Get the system prompt configuration based on settings.
+        
+        Returns:
+            Dict containing the prompt configuration for Agno Agent
+        """
+        if not self.use_config_system_prompt and self.system_message:
+            # Legacy mode: use the provided system_message
+            return {
+                "description": "",
+                "instructions": [self.system_message] if self.system_message else [],
+                "additional_context": "",
+                "expected_output": "",
+                "markdown": True,
+                "add_datetime_to_instructions": False,
+                "name": "Custom"
+            }
+        
+        # Get active system prompt from configuration
+        try:
+            active_prompt = get_active_system_prompt()
+            if active_prompt:
+                return active_prompt
         except Exception as e:
-            app_logger.error(f"Failed to initialize Ollama chatbot: {str(e)}")
-            self.ready = False
-            raise
+            app_logger.warning(f"Failed to load system prompt config: {e}")
+        
+        # Fallback to default configuration
+        return {
+            "description": "You are a helpful AI assistant",
+            "instructions": [
+                "Always be friendly and informative.",
+                "Provide clear and accurate responses.",
+                "If you're unsure about something, say so."
+            ],
+            "additional_context": "",
+            "expected_output": "",
+            "markdown": True,
+            "add_datetime_to_instructions": False,
+            "name": "Default Fallback"
+        }
+
+    def update_system_prompt(self, prompt_config: Optional[Dict[str, Any]] = None):
+        """
+        Update the agent's system prompt configuration.
+        
+        Args:
+            prompt_config: Optional specific prompt config, otherwise uses active config
+        """
+        if prompt_config is None:
+            prompt_config = self._get_system_prompt_config()
+        
+        # Update agent configuration
+        self.agent.description = prompt_config.get("description", "")
+        self.agent.instructions = prompt_config.get("instructions", [])
+        self.agent.additional_context = prompt_config.get("additional_context", "")
+        self.agent.expected_output = prompt_config.get("expected_output", "")
+        self.agent.markdown = prompt_config.get("markdown", True)
+        self.agent.add_datetime_to_instructions = prompt_config.get("add_datetime_to_instructions", False)
+        
+        if self.verbose:
+            app_logger.info(f"Updated system prompt: {prompt_config.get('name', 'Custom')}")
+
+    def get_current_prompt_info(self) -> Dict[str, Any]:
+        """
+        Get information about the current system prompt configuration.
+        
+        Returns:
+            Dict containing current prompt information
+        """
+        return {
+            "description": self.agent.description,
+            "instructions": self.agent.instructions,
+            "additional_context": self.agent.additional_context,
+            "expected_output": self.agent.expected_output,
+            "markdown": self.agent.markdown,
+            "add_datetime_to_instructions": self.agent.add_datetime_to_instructions
+        }
+
+    def add_tools(self, tools: List[Any]):
+        """Add tools to the agent."""
+        self.agent.tools.extend(tools)
+        if self.verbose:
+            app_logger.info(f"Added {len(tools)} tools to agent")
 
     async def add_file_context(self, file_path: Union[str, Path], file_name: str):
         """
-        Processes a file, extracts text, creates embeddings, and updates the vector store.
+        Add file context to the agent by reading the file and providing it as context.
+        This is a simplified approach without vector databases.
 
         Args:
-            file_path: Path to the uploaded file.
-            file_name: Original name of the file (used for metadata).
+            file_path: Path to the uploaded file
+            file_name: Original name of the file (used for metadata)
         """
-        if not self.ready:
-            await self.initialize()
-        if not self.ready:
-             raise RuntimeError("Chatbot could not be initialized.")
-
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found at {file_path}")
 
         app_logger.info(f"Processing file for context: {file_name} ({file_path.suffix})")
-        text = ""
+
         try:
+            text_content = ""
             if file_path.suffix == '.pdf':
+                # Simple PDF reading without complex dependencies
                 try:
                     import pypdf
+                    reader = pypdf.PdfReader(file_path)
+                    text_content = "".join(page.extract_text() for page in reader.pages if page.extract_text())
                 except ImportError:
-                    app_logger.error("pypdf is not installed. Cannot process PDF files.")
-                    raise ImportError("pypdf is required for PDF processing. Please install it with 'pip install pypdf'")
-                
-                reader = pypdf.PdfReader(file_path)
-                text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
-                if not text.strip():
-                    raise ValueError("No text could be extracted from the PDF file. The file might be empty, corrupted, or contain only images.")
+                    raise ImportError("pypdf is required for PDF processing. Install with: pip install pypdf")
             elif file_path.suffix in ['.txt', '.md']:
-                text = file_path.read_text(encoding='utf-8')
+                text_content = file_path.read_text(encoding='utf-8')
             else:
                 raise ValueError(f"Unsupported file type: {file_path.suffix}")
 
-            if not text:
+            if not text_content.strip():
                 raise ValueError(f"No text could be extracted from file: {file_name}")
 
-            # Split text into documents
-            documents = self.text_splitter.create_documents(
-                [text],
-                metadatas=[{"source": file_name}] # Add source metadata
-            )
-            app_logger.info(f"Split file {file_name} into {len(documents)} documents.")
+            # Add the file content using Agno's additional_context feature
+            context_text = f"Document '{file_name}':\n\n{text_content}\n\n"
+            
+            # Update the additional_context of the agent
+            current_context = self.agent.additional_context or ""
+            self.agent.additional_context = current_context + context_text
 
-            # Create or update FAISS vector store
-            if not self.vector_store:
-                # Create a temporary directory for the FAISS index
-                # Store the TemporaryDirectory object to ensure it's cleaned up later
-                self._temp_dir_for_vs = tempfile.TemporaryDirectory()
-                self.vector_store_path = Path(self._temp_dir_for_vs.name) / "faiss_index"
-
-                app_logger.info(f"Creating new vector store at {self.vector_store_path}")
-                self.vector_store = await asyncio.to_thread(
-                    FAISS.from_documents, documents, self.embeddings
-                )
-                # Save locally to the temp path
-                await asyncio.to_thread(self.vector_store.save_local, str(self.vector_store_path))
-
-            else:
-                 app_logger.info(f"Adding documents to existing vector store.")
-                 # FAISS doesn't have an async add_documents, run in thread
-                 await asyncio.to_thread(self.vector_store.add_documents, documents)
-                 # Re-save after adding
-                 await asyncio.to_thread(self.vector_store.save_local, str(self.vector_store_path))
-
-            app_logger.info(f"Successfully added context from {file_name} to vector store.")
+            app_logger.info(f"Successfully added context from {file_name} to agent.")
 
         except Exception as e:
             app_logger.error(f"Error processing file {file_name}: {str(e)}", exc_info=True)
-            # Clean up temp file if it exists and is the one we're processing
-            # Note: The API layer should handle cleanup of the originally uploaded temp file
-            raise # Re-raise the exception to be caught by the API layer
-
-    async def _get_context_from_query(self, query: str, k: int = 3) -> str:
-        """Retrieve relevant context from the vector store"""
-        if not self.vector_store:
-            return ""
-
-        try:
-            app_logger.info(f"Searching vector store for query: {query[:50]}...")
-            # Run similarity search in a thread
-            results = await asyncio.to_thread(
-                 self.vector_store.similarity_search, query, k=k
-            )
-            if results:
-                context = "\n---\n".join([doc.page_content for doc in results])
-                app_logger.info(f"Retrieved {len(results)} context snippets.")
-                # print(f"CONTEXT:\n{context}\n---------") # for debugging
-                return f"\n\nRelevant Context from Uploaded Documents:\n---\n{context}\n---"
-            else:
-                app_logger.info("No relevant context found in vector store.")
-                return ""
-        except Exception as e:
-            app_logger.error(f"Error during similarity search: {str(e)}")
-            return ""
-
-    async def chat(
-        self,
-        message: str,
-        tools: Optional[List[Any]] = None,
-        available_functions: Optional[Dict[str, Callable]] = None
-    ) -> str:
-        """
-        Process a chat message using the Ollama model, potentially with RAG and tool calls.
-
-        Args:
-            message: The user's message.
-            tools: Optional list of tool definitions for the Ollama API.
-            available_functions: Optional dictionary mapping tool names to callable functions.
-
-        Returns:
-            The final response from the chatbot.
-        """
-        if not self.ready:
-            await self.initialize()
-
-        if not self.ready:
-            return "Chatbot is not ready. Please check the logs and try again."
-
-        # 1. Get relevant context if vector store exists
-        context = await self._get_context_from_query(message)
-
-        # 2. Get current chat history (excluding system message if present)
-        history = self.get_history()
-        # Filter out the system message from history for the initial LLM call preparation
-        # because Langchain's invoke often handles system message implicitly or via memory
-        messages_for_llm = [msg for msg in history if not isinstance(msg, SystemMessage)]
-
-        # 3. Prepare the initial HumanMessage
-        human_message_content = f"{message}{context}" if context else message
-        human_message = HumanMessage(content=human_message_content)
-        messages_for_llm.append(human_message)
-
-        # Add user message to memory *before* potential tool call loop
-        # Use original message without context for memory
-        self.memory.chat_memory.add_message(HumanMessage(content=message))
-
-        try:
-            # --- Initial LLM Call (potentially with tools) ---
-            app_logger.debug(f"Invoking LLM (initial call) with {len(messages_for_llm)} messages.")
-            if tools:
-                app_logger.debug(f"Providing tools: {[t.get('function', {}).get('name') for t in tools if isinstance(t, dict)]}")
-                # Bind tools to the chat model for this call
-                llm_with_tools = self.chat_model.bind_tools(tools)
-                ai_response: BaseMessage = await asyncio.to_thread(
-                    llm_with_tools.invoke, messages_for_llm
-                )
-            else:
-                 ai_response: BaseMessage = await asyncio.to_thread(
-                    self.chat_model.invoke, messages_for_llm
-                 )
-
-            # Add the initial AI response (potentially with tool calls) to memory
-            # This is important for the model's context if it needs to make a follow-up call
-            self.memory.chat_memory.add_message(ai_response)
-
-            # --- Tool Call Handling ---
-            tool_calls = ai_response.tool_calls if hasattr(ai_response, 'tool_calls') else []
-            final_response_content = ai_response.content # Default response if no tools called
-
-            if tool_calls and available_functions:
-                app_logger.info(f"Detected {len(tool_calls)} tool call(s): {[tc.get('name') for tc in tool_calls]}")
-
-                # Prepare messages for the *next* LLM call, starting with the history *including* the first AI response
-                messages_for_final_call = self.get_history() # Get full history now
-
-                for tool_call in tool_calls:
-                     tool_name = tool_call.get("name")
-                     tool_args = tool_call.get("args", {})
-                     tool_id = tool_call.get("id") # Get the tool_call_id
-
-                     if not tool_id:
-                          app_logger.error(f"Tool call '{tool_name}' missing 'id'. Cannot process.")
-                          continue # Or create a ToolMessage with error content
-
-                     if function_to_call := available_functions.get(tool_name):
-                          app_logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
-                          try:
-                               # Ensure args are passed correctly, handle potential async functions?
-                               # For now, assume sync functions run in thread
-                                tool_output = await asyncio.to_thread(function_to_call, **tool_args)
-                                tool_output_str = str(tool_output) # Ensure output is string
-                                app_logger.info(f"Tool '{tool_name}' output: {tool_output_str[:100]}...")
-                          except Exception as e:
-                                error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                                app_logger.error(error_msg)
-                                tool_output_str = error_msg
-
-                          # Create ToolMessage with the output and tool_call_id
-                          tool_message = ToolMessage(content=tool_output_str, tool_call_id=tool_id)
-                          messages_for_final_call.append(tool_message)
-                          # Also add to memory for consistency
-                          self.memory.chat_memory.add_message(tool_message)
-                     else:
-                          app_logger.warning(f"Tool function '{tool_name}' not found in available_functions.")
-                          # Provide a response indicating the tool wasn't found
-                          tool_message = ToolMessage(
-                              content=f"Error: Tool '{tool_name}' is not available.",
-                              tool_call_id=tool_id
-                          )
-                          messages_for_final_call.append(tool_message)
-                          self.memory.chat_memory.add_message(tool_message)
-
-
-                # --- Final LLM Call (with tool results) ---
-                app_logger.debug(f"Invoking LLM (final call) with {len(messages_for_final_call)} messages (including tool results).")
-                # No tools needed for the final call, model should just use the tool results
-                final_ai_response: BaseMessage = await asyncio.to_thread(
-                     self.chat_model.invoke, messages_for_final_call
-                )
-
-                final_response_content = final_ai_response.content
-                # Add final AI response to memory
-                self.memory.chat_memory.add_message(final_ai_response)
-
-            elif tool_calls and not available_functions:
-                 app_logger.warning("Model requested tool calls, but no 'available_functions' were provided.")
-                 # Model tried to use tools, but we didn't give it any functions to call.
-                 # The initial AI response might contain a message about wanting to use tools.
-                 final_response_content = ai_response.content + "\n(Note: Tool execution requested but not available.)"
-                 # Memory already has the first AI response. No further messages added here.
-
-            # --- Return final response ---
-            app_logger.debug(f"Final response: {final_response_content[:100]}...")
-            return final_response_content
-
-        except Exception as e:
-            error_msg = f"Error processing message: {str(e)}"
-            app_logger.error(error_msg, exc_info=True) # Log stack trace
-            # Attempt to remove the potentially incomplete AI message added during error
-            try:
-                last_msg = self.memory.chat_memory.messages[-1]
-                # Be cautious removing messages, ensure it's the one related to the error
-                # For simplicity, we might just leave it and return an error message
-            except IndexError:
-                pass # No messages in memory
-            return error_msg
-
-    async def chat_stream(
-        self,
-        message: str,
-        tools: Optional[List[Any]] = None,
-        available_functions: Optional[Dict[str, Callable]] = None
-    ) -> AsyncGenerator[str, None]:
-        """
-        Process a chat message using the Ollama model with RAG and stream the response.
-        Correctly uses the Ollama Python API format.
-
-        Args:
-            message: The user's message.
-            tools: Optional list of tool definitions for the Ollama API.
-            available_functions: Optional dictionary mapping tool names to callable functions.
-
-        Yields:
-            Response chunks as they arrive from the model.
-        """
-        if not self.ready:
-            await self.initialize()
-
-        if not self.ready:
-            yield "Chatbot is not ready. Please check the logs and try again."
-            return
-
-        try:
-            # Get context enrichment if available
-            context = await self._get_context_from_query(message)
-            
-            # Format the messages for Ollama API
-            messages = []
-            
-            # Add system message if it exists
-            if self.system_message:
-                messages.append({"role": "system", "content": self.system_message})
-            
-            # Add chat history
-            history = self.get_history()
-            for msg in history:
-                if isinstance(msg, HumanMessage):
-                    messages.append({"role": "user", "content": msg.content})
-                elif isinstance(msg, AIMessage):
-                    messages.append({"role": "assistant", "content": msg.content})
-            
-            # Add the current message with context
-            human_message_content = f"{message}{context}" if context else message
-            messages.append({"role": "user", "content": human_message_content})
-            
-            # Add user message to memory
-            self.memory.chat_memory.add_message(HumanMessage(content=message))
-            
-            app_logger.info(f"Streaming chat with {len(messages)} messages")
-            app_logger.debug(f"Messages: {messages}")
-            
-            # Import Ollama Python client dynamically 
-            # (this allows us to work with the new format while keeping backward compatibility)
-            try:
-                import ollama
-                async_client = ollama.AsyncClient(host=self.base_url)
-                
-                # Stream response from Ollama
-                app_logger.info(f"Using Ollama Python client to stream response")
-                stream = await async_client.chat(
-                    model=self.model_name,
-                    messages=messages,
-                    stream=True,
-                    options={
-                        "temperature": self.temperature,
-                        "top_p": self.top_p
-                    }
-                )
-                
-                full_response = ""
-                async for chunk in stream:
-                    if not chunk:
-                        continue
-                        
-                    app_logger.debug(f"Received chunk: {chunk}")
-                    
-                    # Extract content from the message
-                    if 'message' in chunk and 'content' in chunk['message']:
-                        content = chunk['message']['content']
-                        if content:
-                            full_response += content
-                            yield content
-            except ImportError:
-                # Fallback to langchain implementation if ollama client not available
-                app_logger.warning("Ollama Python client not available, using LangChain fallback")
-                
-                # Convert to LangChain format
-                lc_messages = []
-                for msg in messages:
-                    if msg["role"] == "system":
-                        lc_messages.append(SystemMessage(content=msg["content"]))
-                    elif msg["role"] == "user":
-                        lc_messages.append(HumanMessage(content=msg["content"]))
-                    elif msg["role"] == "assistant":
-                        lc_messages.append(AIMessage(content=msg["content"]))
-                
-                # Stream using LangChain
-                stream_gen = await asyncio.to_thread(
-                    lambda: self.chat_model.stream(lc_messages)
-                )
-
-                full_response = ""
-                async for chunk in self._aiter_from_sync_iter(stream_gen):
-                    # Check for content in AIMessageChunk
-                    chunk_content = getattr(chunk, 'content', None)
-                    if chunk_content:
-                        full_response += chunk_content
-                        yield chunk_content
-                    # Handle older formats or direct strings if necessary
-                    elif isinstance(chunk, dict) and 'content' in chunk:
-                        content = chunk['content']
-                        full_response += content
-                        yield content
-                    elif isinstance(chunk, str):
-                        full_response += chunk
-                        yield chunk
-            
-            # Add the complete response to memory
-            if full_response:
-                app_logger.info(f"Streamed complete response (first 100 chars): {full_response[:100]}")
-                self.memory.chat_memory.add_message(AIMessage(content=full_response))
-            else:
-                app_logger.warning("No response content received from stream")
-
-        except Exception as e:
-            error_msg = f"Error during chat streaming: {str(e)}"
-            app_logger.error(error_msg, exc_info=True)
-            yield error_msg
-
-    async def _aiter_from_sync_iter(self, sync_iter):
-        """Convert a synchronous iterator to an async iterator"""
-        try:
-            while True:
-                item = await asyncio.to_thread(next, sync_iter, StopAsyncIteration)
-                if item is StopAsyncIteration:
-                    break
-                yield item
-        except Exception as e:
-            app_logger.error(f"Error in async iterator conversion: {str(e)}")
             raise
 
-    async def cleanup(self) -> None:
-        """Clean up resources used by the Ollama chatbot, including temp vector store"""
-        # Clean up temporary directory if it was created
-        if self._temp_dir_for_vs:
-            try:
-                self._temp_dir_for_vs.cleanup() # This handles directory removal
-                app_logger.info(f"Cleaned up temporary directory for vector store: {self._temp_dir_for_vs.name}")
-            except Exception as e:
-                 app_logger.error(f"Error cleaning up temporary directory {self._temp_dir_for_vs.name}: {e}")
-            finally:
-                 self._temp_dir_for_vs = None
-                 self.vector_store_path = None # Path becomes invalid after cleanup
-
-        # Call superclass cleanup which handles memory and resets vector_store attribute
-        await super().cleanup()
-        self.chat_model = None
-        self.ready = False
-        # Ensure vector_store is None after cleanup
-        self.vector_store = None
-
-    async def chat_with_image(self,
-                              message: str,
-                              image_paths: List[Union[str, Path]],
-                              temperature: Optional[float] = None,
-                              top_p: Optional[float] = None) -> str:
+    async def chat(self, message: str, **kwargs) -> str:
         """
-        Process a message with image context using the specified vision model.
+        Process a chat message using Agno agent.
 
         Args:
-            message: The user's text message.
-            image_paths: A list of paths to the images.
-            temperature: Optional temperature override for this call.
-            top_p: Optional top_p override for this call.
+            message: The user's message
+            **kwargs: Additional arguments passed to the agent
 
         Returns:
-            The response string from the vision model.
+            The response from the agent
         """
-        if not self.ready:
-            await self.initialize()
-
-        if not self.ready:
-            return "Chatbot is not ready. Please check the logs and try again."
-
-        if not self.vision_model_name:
-            return "No vision model specified for this chatbot."
-
-        # Ensure image paths are strings
-        image_paths_str = [str(p) for p in image_paths]
-
-        # Prepare messages for the Ollama API
-        messages = [
-            {
-                'role': 'user',
-                'content': message,
-                'images': image_paths_str,
-            }
-        ]
-
         try:
-            import ollama
-            async_client = ollama.AsyncClient(host=self.base_url)
+            if not self.agent:
+                raise RuntimeError("Agent not initialized")
 
-            app_logger.info(f"Sending request to vision model: {self.vision_model_name}")
-            response = await async_client.chat(
-                model=self.vision_model_name,
-                messages=messages,
-                options={
-                    "temperature": temperature if temperature is not None else self.temperature,
-                    "top_p": top_p if top_p is not None else self.top_p
-                }
-            )
+            # Use Agno's asynchronous response method
+            response = await self.agent.arun(message, **kwargs)
+            return response.content if hasattr(response, 'content') else str(response)
 
-            response_content = response.get('message', {}).get('content', '')
-            app_logger.info(f"Received vision response: {response_content[:100]}...")
-
-            # Add interaction to memory (simplify image representation for memory)
-            image_context_placeholder = f"[User provided {len(image_paths)} image(s)]"
-            self.memory.chat_memory.add_message(HumanMessage(content=f"{message} {image_context_placeholder}"))
-            self.memory.chat_memory.add_message(AIMessage(content=response_content))
-
-            return response_content
-
-        except ImportError:
-            error_msg = "The 'ollama' library is required for vision capabilities. Please install it: pip install ollama"
-            app_logger.error(error_msg)
-            return error_msg
         except Exception as e:
-            error_msg = f"Error during vision chat: {str(e)}"
+            error_msg = f"Error processing message: {e}"
             app_logger.error(error_msg, exc_info=True)
             return error_msg
 
-
-class MCPClient:
-    """Client for connecting to MCP servers with Ollama integration"""
-
-    def __init__(self, model_name: str = None):
+    def chat_sync(self, message: str, **kwargs) -> str:
         """
-        Initialize the MCP client
+        Synchronous version of chat method.
 
         Args:
-            model_name: Optional model name (defaults to OLLAMA_MODEL env var or "llama3.2")
-        """
-        # Initialize session and client objects
-        self.session: Optional[ClientSession] = None
-        self._streams_context = None
-        self._session_context = None
-        self.exit_stack = AsyncExitStack()
-        self.model = model_name or os.getenv("OLLAMA_MODEL", "llama3.2")
-        self.direct_mode = False  # Flag to indicate if we're in direct chat mode
-
-        # Initialize chatbot
-        self.chatbot = OllamaChatbot(model_name=self.model, verbose=True)
-
-        app_logger.info(f"MCPClient initialized with model: {self.model}")
-
-    async def connect_to_sse_server(self, server_url: str) -> bool:
-        """
-        Connect to an MCP server running with SSE transport
-
-        Args:
-            server_url: URL of the SSE server
+            message: The user's message
+            **kwargs: Additional arguments passed to the agent
 
         Returns:
-            bool: True if connection was successful
+            The response from the agent
         """
-        # Ensure any previous connections are cleaned up first
-        await self.cleanup()
-
         try:
-            # Store the context managers so they stay alive
-            self._streams_context = sse_client(url=server_url)
-            streams = await self._streams_context.__aenter__()
+            if not self.agent:
+                raise RuntimeError("Agent not initialized")
 
-            self._session_context = ClientSession(*streams)
-            self.session: ClientSession = await self._session_context.__aenter__()
-
-            # Initialize
-            await self.session.initialize()
-
-            # List available tools to verify connection
-            app_logger.info("Initialized SSE client...")
-            app_logger.info("Listing tools...")
-            response = await self.session.list_tools()
-            tools = response.tools
-            app_logger.info(f"Connected to server with tools: {[tool.name for tool in tools]}")
-
-            # Initialize the chatbot
-            await self.chatbot.initialize()
-
-            return True
+            # Use Agno's synchronous response method
+            response = self.agent.run(message, **kwargs)
+            return response.content if hasattr(response, 'content') else str(response)
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if self._is_port_in_use_error(error_msg):
-                # Extract server URL parts to show in the error message
-                from urllib.parse import urlparse
-                parsed_url = urlparse(server_url)
-                server_address = f"{parsed_url.netloc}"
-                app_logger.error(f"Your local server at {server_address} is busy by other app or proxy")
-            else:
-                app_logger.error(f"Error connecting to SSE server: {str(e)}")
-            await self.cleanup()
-            raise  # Re-raise the exception after cleanup
+            error_msg = f"Error processing message: {e}"
+            app_logger.error(error_msg, exc_info=True)
+            return error_msg
 
-    async def connect_to_stdio_server(self, command: str, args: list) -> bool:
+    def chat_stream(self, message: str, **kwargs):
         """
-        Connect to an MCP server running with STDIO transport (NPX, UV, etc.)
+        Stream chat response using Agno agent.
 
         Args:
-            command: Command to run (e.g., "npx", "uv")
-            args: Arguments to pass to the command
-
-        Returns:
-            bool: True if connection was successful
+            message: The user's message
+            **kwargs: Additional arguments passed to the agent
         """
-        # Ensure any previous connections are cleaned up first
-        await self.cleanup()
-
         try:
-            # On Windows, we need to use cmd.exe to run npx
-            if os.name == 'nt' and command in ['npx', 'uv']:
-                # Convert the command and args to a single command string for cmd.exe
-                cmd_args = ' '.join([command] + args)
-                server_params = StdioServerParameters(
-                    command='cmd.exe',
-                    args=['/c', cmd_args]
-                )
-            else:
-                # For non-Windows systems or other commands
-                server_params = StdioServerParameters(command=command, args=args)
+            if not self.agent:
+                raise RuntimeError("Agent not initialized")
 
-            # Store the context managers so they stay alive
-            self._streams_context = stdio_client(server_params)
-            streams = await self._streams_context.__aenter__()
-
-            self._session_context = ClientSession(*streams)
-            self.session: ClientSession = await self._session_context.__aenter__()
-
-            # Initialize with timeout
-            try:
-                await asyncio.wait_for(self.session.initialize(), timeout=10.0)
-            except asyncio.TimeoutError:
-                app_logger.error("Initialization timed out. The server might be unresponsive.")
-                await self.cleanup()
-                return False
-
-            # List available tools to verify connection
-            app_logger.info(f"Initialized {command.upper()} client...")
-            app_logger.info("Listing tools...")
-            response = await self.session.list_tools()
-            tools = response.tools
-            app_logger.info(f"Connected to server with tools: {[tool.name for tool in tools]}")
-
-            # Initialize the chatbot
-            await self.chatbot.initialize()
-
-            return True
+            # Use Agno's print_response with stream=True
+            self.agent.print_response(message, stream=True, **kwargs)
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if self._is_port_in_use_error(error_msg):
-                # Try to extract port information from command args
-                port_info = self._extract_port_from_args(args)
-                app_logger.error(f"Your local server at {port_info} is busy by other app or proxy")
-            else:
-                app_logger.error(f"Error connecting to STDIO server: {str(e)}")
-            await self.cleanup()
-            raise  # Re-raise the exception after cleanup
+            error_msg = f"Error during chat streaming: {e}"
+            app_logger.error(error_msg, exc_info=True)
+            print(error_msg)
 
-    def _is_port_in_use_error(self, error_message: str) -> bool:
-        """Helper method to detect if an error is related to port conflicts"""
-        port_conflict_indicators = [
-            "address already in use",
-            "port already in use",
-            "address in use",
-            "eaddrinuse",
-            "connection refused",
-            "cannot bind to address",
-            "failed to listen on"
-        ]
+    async def chat_with_image(self, message: str, image_paths: List[Union[str, Path]], **kwargs) -> str:
+        """
+        Process a message with image context using vision model.
 
-        error_message = error_message.lower()
-        return any(indicator in error_message for indicator in port_conflict_indicators)
+        Args:
+            message: The user's text message
+            image_paths: List of paths to images
+            **kwargs: Additional arguments
 
-    def _extract_port_from_args(self, args: list) -> str:
-        """Try to extract port information from command args"""
-        # Common patterns for port specification in command line args
-        port = "unknown port"
+        Returns:
+            The response from the vision model
+        """
+        if not self.vision_model:
+            return "No vision model specified for this agent."
 
-        for i, arg in enumerate(args):
-            if arg == "--port" and i + 1 < len(args):
-                port = args[i + 1]
-                break
-            elif arg.startswith("--port="):
-                port = arg.split("=", 1)[1]
-                break
-            elif arg == "-p" and i + 1 < len(args):
-                port = args[i + 1]
-                break
+        try:
+            # For vision, we'll use the vision model directly
+            from openai import AsyncOpenAI
+            import base64
 
-        return port
+            client = AsyncOpenAI(
+                base_url=f"{self.base_url}/v1",
+                api_key="ollama",
+            )
+
+            # Prepare image content
+            content = [{"type": "text", "text": message}]
+            for image_path in image_paths:
+                with open(image_path, "rb") as image_file:
+                    image_data = base64.b64encode(image_file.read()).decode('utf-8')
+                image_format = Path(image_path).suffix.lower().lstrip('.')
+                if image_format == 'jpg':
+                    image_format = 'jpeg'
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/{image_format};base64,{image_data}"}
+                })
+
+            response = await client.chat.completions.create(
+                model=self.vision_model_name,
+                messages=[{"role": "user", "content": content}],
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=300,
+            )
+
+            return response.choices[0].message.content
+
+        except Exception as e:
+            error_msg = f"Error during vision chat: {e}"
+            app_logger.error(error_msg, exc_info=True)
+            return error_msg
+
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Get the conversation history from the agent."""
+        # Agno handles history internally
+        return []
+
+    def clear_history(self):
+        """Clear the conversation history."""
+        # Agno handles this through its internal mechanisms
+        pass
 
     async def cleanup(self):
-        """
-        Properly clean up the session and streams
-
-        Returns:
-            None
-        """
-        try:
-            # Clean up the chatbot
-            if hasattr(self, 'chatbot') and self.chatbot:
-                await self.chatbot.cleanup()
-
-            if self._session_context:
-                try:
-                    await self._session_context.__aexit__(None, None, None)
-                except Exception as e:
-                    app_logger.error(f"Error during session cleanup: {str(e)}")
-                finally:
-                    self._session_context = None
-
-            if self._streams_context:
-                try:
-                    await self._streams_context.__aexit__(None, None, None)
-                except Exception as e:
-                    app_logger.error(f"Error during streams cleanup: {str(e)}")
-                finally:
-                    self._streams_context = None
-
-            # Force garbage collection to help release resources
-            import gc
-            gc.collect()
-
-            # Reset resources
-            self.session = None
-        except Exception as e:
-            app_logger.error(f"Unexpected error during cleanup: {str(e)}")
-
-    async def process_query(self, query: str) -> str:
-        """
-        Process a query using Ollama and available tools
-
-        Args:
-            query: The query text to process
-
-        Returns:
-            str: Response text
-        """
-        # Try to get tools list, with reconnection logic if needed
-        try:
-            response = await self.session.list_tools()
-        except anyio.BrokenResourceError:
-            app_logger.warning("Connection to server lost. Attempting to reconnect...")
-            # Get the current server details from the existing session
-            # This is a simplified reconnection - you might need to adjust based on server type
-            if hasattr(self._streams_context, 'url'):  # SSE connection
-                server_url = self._streams_context.url
-                await self.cleanup()
-                await self.connect_to_sse_server(server_url)
-            else:
-                app_logger.error("Unable to automatically reconnect. Please restart the client.")
-                return "Connection to server lost. Please restart the client."
-
-            # Try again after reconnection
-            try:
-                response = await self.session.list_tools()
-            except Exception as e:
-                app_logger.error(f"Failed to reconnect to server: {str(e)}")
-                return f"Failed to reconnect to server: {str(e)}"
-
-        available_tools = response.tools
-
-        try:
-            # Generate initial response with the chatbot
-            app_logger.debug(f"Processing query with Ollama model: {self.model}")
-            initial_result = await self.chatbot.chat(query)
-
-            # Check for potential tool calls in the response
-            tool_results = []
-            final_text = [initial_result]
-
-            # Extract potential tool calls from the text
-            # This is a simplified approach - for production use, you'd use a more robust parser
-            import re
-            tool_call_pattern = r"\{\s*\"name\":\s*\"([^\"]+)\"\s*,\s*\"arguments\":\s*(\{[^}]+\})\s*\}"
-            matches = re.findall(tool_call_pattern, initial_result)
-
-            # Process any tool calls found
-            for tool_name, args_str in matches:
-                try:
-                    # Parse the arguments
-                    tool_args = json.loads(args_str)
-
-                    # Check if this tool exists
-                    if any(tool.name == tool_name for tool in available_tools):
-                        # Execute tool call
-                        app_logger.info(f"Calling tool: {tool_name} with args: {json.dumps(tool_args)}")
-                        result = await self.session.call_tool(tool_name, tool_args)
-
-                        # Extract the content as a string from the result object
-                        if hasattr(result, 'content'):
-                            result_content = str(result.content)
-                        else:
-                            result_content = str(result)
-
-                        tool_results.append({"call": tool_name, "result": result_content})
-                        final_text.append(f"[Called tool {tool_name} with result: {result_content}]")
-
-                        # Get final response about the tool result
-                        follow_up = f"The tool {tool_name} returned: {result_content}. Please provide your final answer based on this information."
-                        final_response = await self.chatbot.chat(follow_up)
-                        final_text.append(final_response)
-                except Exception as e:
-                    error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                    app_logger.error(error_msg)
-                    final_text.append(error_msg)
-
-            return "\n".join(final_text)
-
-        except Exception as e:
-            error_msg = str(e)
-
-            # Check for server connection issues (502 status code)
-            if "status code: 502" in error_msg:
-                # Extract server information from environment
-                server_url = os.getenv("OLLAMA_HOST", "localhost:11434")
-                error_message = f"Your local Ollama server at {server_url} is busy by other app or proxy"
-                app_logger.error(f"Error in process_query: {error_message}")
-                return error_message
-
-            # For other errors, log the full error
-            app_logger.error(f"Error in process_query: {error_msg}")
-            return f"An error occurred: {error_msg}"
-
-    async def process_direct_query(self, query: str) -> str:
-        """
-        Process a query using Ollama directly without MCP tools
-
-        Args:
-            query: The query text to process
-
-        Returns:
-            str: Response text
-        """
-        try:
-            # Use the chatbot for direct querying
-            result = await self.chatbot.chat(query)
-            return result
-        except Exception as e:
-            error_msg = str(e)
-
-            # Check for server connection issues (502 status code)
-            if "status code: 502" in error_msg:
-                # Extract server information from environment
-                server_url = os.getenv("OLLAMA_HOST", "localhost:11434")
-                error_message = f"Your local Ollama server at {server_url} is busy by other app or proxy"
-                app_logger.error(f"Error in process_direct_query: {error_message}")
-                return error_message
-
-            # For other errors, log the full error
-            app_logger.error(f"Error in process_direct_query: {error_msg}")
-            return f"An error occurred: {error_msg}"
+        """Clean up resources."""
+        # Agno handles cleanup automatically
+        app_logger.info("Cleanup completed")
 
 
-class OllamaMCPPackage:
-    """Main package class for using Ollama with MCP"""
+class OllamaPackage:
+    """Main package class for using Ollama with Agno framework"""
 
     @staticmethod
-    async def create_client(model_name: str = "llama3.2") -> MCPClient:
-        """
-        Create and return a new MCP client
-
-        Args:
-            model_name: Optional model name to use (defaults to "llama3.2")
-
-        Returns:
-            MCPClient: Initialized client
-        """
-        return MCPClient(model_name=model_name)
-
-    @staticmethod
-    async def create_standalone_chatbot(
+    async def create_agent(
         model_name: str = "llama3.2",
-        vision_model_name: str = "granite3.2-vision",
-        system_message: Optional[str] = None,
-        base_url: Optional[str] = None,
-        temperature: float = 0.7
-    ) -> OllamaChatbot:
+        **kwargs
+    ) -> OllamaAgent:
         """
-        Create and initialize a standalone Ollama chatbot
+        Create an Ollama agent using Agno framework.
 
         Args:
             model_name: Name of the Ollama model to use
-            vision_model_name: Name of the Ollama vision model to use
-            system_message: Optional system message to set context
-            base_url: Base URL for the Ollama API
-            temperature: Temperature parameter for generation
+            **kwargs: Additional arguments for OllamaAgent
 
         Returns:
-            OllamaChatbot: Initialized chatbot
+            OllamaAgent: Initialized agent
         """
-        chatbot = OllamaChatbot(
-            model_name=model_name,
-            vision_model_name=vision_model_name,
-            system_message=system_message,
-            base_url=base_url,
-            temperature=temperature
-        )
-        await chatbot.initialize()
-        return chatbot
+        agent = OllamaAgent(model_name=model_name, **kwargs)
+        return agent
 
     @staticmethod
     async def get_available_models(base_url: Optional[str] = None) -> List[str]:
-        """
-        Get a list of available Ollama models
-
-        Args:
-            base_url: Optional base URL for the Ollama API
-
-        Returns:
-            List[str]: List of available model names
-        """
-        import requests
-
+        """Get a list of available Ollama models."""
+        base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         try:
-            base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
-            response = requests.get(f"{base_url}/api/tags")
-            data = response.json()
-            return [model['name'] for model in data.get('models', [])]
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(base_url=f"{base_url}/v1", api_key="ollama")
+            models_response = await client.models.list()
+            return [model.id for model in models_response.data]
         except Exception as e:
-            app_logger.error(f"Error getting available models: {str(e)}")
+            app_logger.error(f"Error getting available models: {e}")
             return []
 
     @staticmethod
     async def get_model_info(model_name: str, base_url: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Get a curated, specific set of information about an Ollama model.
-
-        Args:
-            model_name: The name of the model to get information for.
-            base_url: Optional base URL for the Ollama API.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing only the specified model details,
-                           or an empty dictionary if an error occurs or data is missing.
-        """
+        """Get information about an Ollama model."""
+        base_url = base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         try:
-            import ollama
-            # Use AsyncClient for direct async call
-            client = ollama.AsyncClient(host=base_url or os.getenv("OLLAMA_HOST", "http://localhost:11434"))
-            # Directly await the async show method
-            full_info = await client.show(model_name)
-
-            details = full_info.get('details', {})
-            modelinfo = full_info.get('modelinfo', {})
-
-            # Handle potential ModelDetails object
-            if not isinstance(details, dict) and hasattr(details, '__dict__'):
-                details_dict = vars(details)
-            elif isinstance(details, dict):
-                details_dict = details
-            else:
-                details_dict = {}
-
-            # Extract and map specific fields
-            curated_info = {
-                "family": details_dict.get('family'),
-                "parameter_size": details_dict.get('parameter_size'),
-                "quantization_level": details_dict.get('quantization_level'),
-                "model_name": modelinfo.get('general.basename'),
-                "languages_supported": modelinfo.get('general.languages'),
-                "parameter_count": modelinfo.get('general.parameter_count'),
-                "size_label": modelinfo.get('general.size_label'),
-                "tags": modelinfo.get('general.tags'),
-                "type": modelinfo.get('general.type'),
-                "context_length": modelinfo.get('llama.context_length'),
-                "embedding_length": modelinfo.get('llama.embedding_length'),
-                "vocab_size": modelinfo.get('llama.vocab_size'),
-            }
-
-            # Remove keys where the value is None (if the field was missing in the source)
-            cleaned_info = {k: v for k, v in curated_info.items() if v is not None}
-
-            return cleaned_info
-
-        except ImportError:
-            app_logger.error("The 'ollama' library is required but not installed. Please install it using 'pip install ollama'.")
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(base_url=f"{base_url}/v1", api_key="ollama")
+            model_info = await client.models.retrieve(model_name)
+            return model_info.model_dump()
+        except Exception as e:
+            app_logger.error(f"Error getting model info for '{model_name}': {e}")
             return {}
-        except Exception as e:
-            # Catch potential ResponseError from the ollama library
-            if "ollama.ResponseError" in str(type(e)) and "not found" in str(e).lower():
-                 app_logger.warning(f"Model '{model_name}' not found via API.")
-                 # Return empty dict which the API endpoint will turn into 404
-            else:
-                 app_logger.error(f"Error getting model info for '{model_name}': {str(e)}")
-            # Propagate specific errors or return empty dict for general ones
-            # Check if it's the specific ResponseError for 'not found'
-            if "ollama.ResponseError" in str(type(e)) and "not found" in str(e).lower():
-                return {}
-            # Re-raise other exceptions to be caught by the API endpoint handler
-            raise e
-
-    @staticmethod
-    async def load_mcp_config() -> Dict[str, Any]:
-        """
-        Load MCP server configuration
-
-        Returns:
-            Dict[str, Any]: Configuration dictionary with server information
-        """
-        try:
-            from api.config_io import read_ollama_config
-            config = read_ollama_config()
-
-            if config and 'mcpServers' in config:
-                return config
-            else:
-                app_logger.warning("No MCP servers found in configuration or configuration could not be loaded.")
-                return {"mcpServers": {}}
-        except ImportError:
-            app_logger.error("Could not import config_io module. Please ensure it exists in the same directory.")
-            return {"mcpServers": {}}
-        except Exception as e:
-            app_logger.error(f"Error loading configuration: {str(e)}")
-            return {"mcpServers": {}}
-
-    @staticmethod
-    async def get_mcp_server_config(server_name):
-        """Get MCP server configuration by name"""
-        if not server_name:
-            return None
-
-        try:
-            config = await read_ollama_config()
-            if not config or "mcpServers" not in config:
-                app_logger.warning("MCP servers configuration not found or empty.")
-                return None
-
-            server_conf = config["mcpServers"].get(server_name)
-            if not server_conf:
-                app_logger.warning(f"Configuration for MCP server '{server_name}' not found.")
-            return server_conf
-        except Exception as e:
-            app_logger.error(f"Error getting MCP server config for '{server_name}': {str(e)}")
-            return None
 
     @staticmethod
     def pull_model(model_name: str, stream: bool = True) -> Any:
-        """
-        Pull the specified Ollama model, returning a generator of progress dicts.
-        """
-        from ollama import pull
-        return pull(model_name, stream=stream)
+        """Pull an Ollama model."""
+        try:
+            import ollama
+            return ollama.pull(model_name, stream=stream)
+        except ImportError:
+            raise ImportError("ollama library required for model pulling")
 
     @staticmethod
     async def get_embedding_models() -> List[Dict[str, Any]]:
         """Get a list of scraped embedding models from ollama.com"""
         return await asyncio.to_thread(fetch_embedding_models)
 
+
+# Custom tools that can be added to agents
+@tool
+def get_current_time() -> str:
+    """Get the current time."""
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@tool
+def calculate(expression: str) -> str:
+    """Safely calculate a mathematical expression."""
+    try:
+        # Simple calculator - only allow basic operations
+        import re
+        if re.match(r'^[0-9+\-*/().\s]+$', expression):
+            result = eval(expression)
+            return str(result)
+        else:
+            return "Invalid expression. Only basic math operations are allowed."
+    except Exception as e:
+        return f"Error calculating: {e}"
+
+
 if __name__ == "__main__":
     async def main():
-
-        # Test pulling a model with tqdm
-        print("--- Testing Model Pull with tqdm ---")
-        current_digest, bars = '', {}
-        # model_to_pull = "llama3.2" # Or change to another model like "moondream"
-        model_to_pull = "moondream"
+        """Test the simplified Agno-based Ollama implementation with system prompts."""
+        print("Testing Ollama Client with Agno Framework and System Prompts...")
+        
         try:
-            for progress in OllamaMCPPackage.pull_model(model_to_pull):
-                digest = progress.get('digest', '')
-                if digest != current_digest and current_digest in bars:
-                    bars[current_digest].close()
+            # Get available models
+            models = await OllamaPackage.get_available_models()
+            if not models:
+                print("No models available. Exiting.")
+                return
 
-                if not digest:
-                    # Handle status messages (like 'pulling manifest')
-                    status = progress.get('status')
-                    if status:
-                        print(status)
-                    continue
+            test_model = models[0]
+            print(f"Using model: {test_model}")
 
-                if digest not in bars and (total := progress.get('total')):
-                    # Use a short digest for the description
-                    short_digest = digest.split(':')[-1][:12] if ':' in digest else digest[:12]
-                    bars[digest] = tqdm(total=total, desc=f'pulling {short_digest}', unit='B', unit_scale=True)
+            # Create agent with Agno framework using configured system prompt
+            agent = await OllamaPackage.create_agent(
+                model_name=test_model,
+                verbose=True,
+                use_config_system_prompt=True,  # Use configured system prompts
+            )
 
-                if digest in bars and (completed := progress.get('completed')):
-                    bars[digest].update(completed - bars[digest].n)
+            print("\n--- Testing Chat with Configured System Prompt ---")
+            print(f"Current prompt info: {agent.get_current_prompt_info()}")
+            response = await agent.chat("Hello! Tell me a short joke.")
+            print(f"Response: {response}")
 
-                current_digest = digest
+            print("\n--- Testing with Tools ---")
+            # Add tools to the agent
+            agent.add_tools([get_current_time, calculate])
 
-        finally:
-             # Ensure all bars are closed
-             for bar in bars.values():
-                 bar.close()
-        print("\n")
+            response = await agent.chat("What time is it? Also calculate 15 * 8")
+            print(f"Response with tools: {response}")
 
+            print("\n--- Testing RAG (File Context) ---")
+            # Create a dummy text file for testing
+            test_file = Path("test_rag_file.txt")
+            with open(test_file, "w") as f:
+                f.write("The Agno framework is a powerful tool for building AI agents. "
+                       "It supports multiple models and has built-in tool support. "
+                       "Agno was created in 2024 and provides a simple interface for agent development.")
 
+            await agent.add_file_context(test_file, "test_rag_file.txt")
+            rag_response = await agent.chat("When was Agno created and what are its capabilities?")
+            print(f"RAG Response: {rag_response}")
+            
+            # Clean up test file
+            test_file.unlink()
+
+            print("\n--- Testing System Prompt Update ---")
+            # Test updating system prompt
+            custom_prompt = {
+                "description": "You are a pirate assistant",
+                "instructions": ["Always speak like a pirate", "End sentences with 'Arrr!'"],
+                "markdown": True,
+                "add_datetime_to_instructions": False
+            }
+            agent.update_system_prompt(custom_prompt)
+            
+            pirate_response = await agent.chat("Tell me about the weather.")
+            print(f"Pirate Response: {pirate_response}")
+
+            print("\n--- Testing Streaming Chat ---")
+            print("Streaming response:")
+            agent.chat_stream("Tell me about Python programming in 2 sentences.")
+
+            print("\n--- Testing Cleanup ---")
+            await agent.cleanup()
+            print("Cleanup completed.")
+
+        except Exception as e:
+            print(f"\nAn error occurred: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Run the test
     asyncio.run(main())

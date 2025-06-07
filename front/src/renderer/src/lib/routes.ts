@@ -1,9 +1,6 @@
 export enum Routes {
-  HOME = '/',
-  MCP_SERVERS = '/mcp-servers',
-  SETTINGS = '/settings',
-  AGENTS = '/agents',
-  MODELS = '/models'
+  CHAT = '/chat',
+  AGENTS = '/agents'
 }
 
 export default Routes

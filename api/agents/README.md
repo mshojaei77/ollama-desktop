@@ -27,7 +27,7 @@ import logging
 from typing import Dict, List, Any, AsyncGenerator, Optional
 
 from .base_agent import BaseAgent
-from ollama_mcp import OllamaMCPPackage
+from api.ollama_client import OllamaPackage
 
 
 logger = logging.getLogger("my_new_agent")
@@ -57,7 +57,7 @@ class MyNewAgent(BaseAgent):
         """Initialize the agent and set up required resources."""
         try:
             # Initialize the Ollama chatbot or other resources
-            self.chatbot = await OllamaMCPPackage.create_standalone_chatbot(
+            self.chatbot = await OllamaPackage.create_standalone_chatbot(
                 model_name=self.config["default_model"],
                 system_message=self.config["system_message"]
             )

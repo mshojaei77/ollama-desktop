@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import Chat from './containers/Chat'
 import Sidebar from './containers/Sidebar'
-import MCPServers from './containers/MCPServers'
 import Settings from './containers/Settings'
 import Agents from './containers/Agents'
 import Models from './Models'
@@ -51,11 +50,11 @@ function App(): JSX.Element {
           <Sidebar />
           <div className="flex-1 overflow-y-auto">
             <Routes>
-              <Route path={AppRoutes.HOME} element={<Chat />} />
-              <Route path={AppRoutes.MCP_SERVERS} element={<MCPServers />} />
-              <Route path={AppRoutes.SETTINGS} element={<Settings />} />
+              <Route path="/" element={<Chat />} />
+              <Route path={AppRoutes.CHAT} element={<Chat />} />
               <Route path={AppRoutes.AGENTS} element={<Agents />} />
-              <Route path={AppRoutes.MODELS} element={<Models />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/models" element={<Models />} />
             </Routes>
           </div>
         </div>
