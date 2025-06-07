@@ -5,6 +5,7 @@ import { getAgentIconPath } from '../utils'
 import mcpAgentService, { MCPAgent, UpdateMCPAgentRequest } from '../services/mcpAgentService'
 import DeleteMCPAgentModal from '../components/DeleteMCPAgentModal'
 import EditMCPAgentModal from '../components/EditMCPAgentModal'
+import CreateMCPAgentModal from '../components/CreateMCPAgentModal'
 
 function Agents(): JSX.Element {
   const [filter, setFilter] = useState('')
@@ -98,6 +99,12 @@ function Agents(): JSX.Element {
   // Reload agents
   const handleReload = () => {
     fetchAgents()
+  }
+
+  // Handle agent creation success
+  const handleAgentCreated = () => {
+    setShowCreateAgent(false)
+    fetchAgents() // Refresh the list
   }
 
   // Handle delete confirmation
@@ -352,6 +359,14 @@ function Agents(): JSX.Element {
           agent={agentToEdit}
           onClose={() => setAgentToEdit(null)}
           onSave={handleEditAgent}
+        />
+      )}
+
+      {/* Create Agent Modal */}
+      {showCreateAgent && (
+        <CreateMCPAgentModal
+          onClose={() => setShowCreateAgent(false)}
+          onSuccess={handleAgentCreated}
         />
       )}
     </div>

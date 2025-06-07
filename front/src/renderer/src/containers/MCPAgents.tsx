@@ -427,30 +427,23 @@ function MCPAgents(): JSX.Element {
               <div className="p-5">
                 <div className="flex items-start space-x-4 mb-3">
                   <div className="flex-shrink-0">
-                    {agent.icon ? (
-                      agent.icon.startsWith('./') || agent.icon.startsWith('/') || agent.icon.includes('.png') || agent.icon.includes('.jpg') || agent.icon.includes('.svg') ? (
-                        <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center overflow-hidden">
-                          <img 
-                            src={agent.icon} 
-                            alt={agent.name}
-                            className="w-10 h-10 object-contain"
-                            onError={(e) => {
-                              // Fallback to Bot icon if image fails to load
-                              (e.target as HTMLImageElement).style.display = 'none';
-                              (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="w-8 h-8 text-primary"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="m12 7 2 4-4 4"/><path d="m8 12-2-2"/><path d="m16 12 2-2"/></svg></div>';
-                            }}
-                          />
-                        </div>
+                    <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center overflow-hidden">
+                      {agent.icon ? (
+                        <img 
+                          src={agent.icon} 
+                          alt={agent.name}
+                          className="w-full h-full object-cover rounded-full"
+                          onError={(e) => {
+                            // Fallback to Bot icon if image fails to load
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            const parent = (e.target as HTMLImageElement).parentElement!;
+                            parent.innerHTML = '<div class="w-8 h-8 text-primary"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="m12 7 2 4-4 4"/><path d="m8 12-2-2"/><path d="m16 12 2-2"/></svg></div>';
+                          }}
+                        />
                       ) : (
-                        <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center text-2xl">
-                          {agent.icon}
-                        </div>
-                      )
-                    ) : (
-                      <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center">
                         <Bot className="w-8 h-8 text-primary" />
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between mb-2">
