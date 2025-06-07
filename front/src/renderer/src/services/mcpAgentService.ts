@@ -240,13 +240,24 @@ const mcpAgentService = {
     }
   },
 
-  // Delete an MCP agent
+  // Delete an MCP agent (soft delete)
   deleteAgent: async (agentId: string): Promise<boolean> => {
     try {
       await axios.delete(`${API_URL}/mcp-agents/${agentId}`);
       return true;
     } catch (error) {
       console.error(`Error deleting MCP agent ${agentId}:`, error);
+      return false;
+    }
+  },
+
+  // Permanently delete an MCP agent
+  deleteAgentPermanently: async (agentId: string): Promise<boolean> => {
+    try {
+      await axios.delete(`${API_URL}/mcp-agents/${agentId}/permanent`);
+      return true;
+    } catch (error) {
+      console.error(`Error permanently deleting MCP agent ${agentId}:`, error);
       return false;
     }
   },
@@ -477,39 +488,61 @@ const mcpAgentService = {
     return requirements;
   },
 
-  // Initialize sample agents (only if no agents exist)
-  initializeSampleAgents: async (): Promise<{ samples_created: boolean; message: string }> => {
+  // Initialize pre-built agents (only if no agents exist)
+  initializePrebuiltAgents: async (): Promise<{ prebuilt_created: boolean; message: string }> => {
     try {
       const response = await axios.post<{
         status: string;
         message: string;
-        samples_created: boolean;
-      }>(`${API_URL}/mcp-agents/initialize-samples`);
+        prebuilt_created: boolean;
+      }>(`${API_URL}/mcp-agents/initialize-prebuilt`);
       return {
-        samples_created: response.data.samples_created,
+        prebuilt_created: response.data.prebuilt_created,
         message: response.data.message
       };
     } catch (error) {
-      console.error('Error initializing sample agents:', error);
-      return { samples_created: false, message: 'Failed to initialize sample agents' };
+      console.error('Error initializing pre-built agents:', error);
+      return { prebuilt_created: false, message: 'Failed to initialize pre-built agents' };
     }
   },
 
-  // Force create sample agents
-  createSampleAgents: async (): Promise<{ agents: MCPAgent[]; message: string }> => {
+  // Force create pre-built agents
+  createPrebuiltAgents: async (): Promise<{ agents: MCPAgent[]; message: string }> => {
     try {
       const response = await axios.post<{
         status: string;
         message: string;
         agents: MCPAgent[];
-      }>(`${API_URL}/mcp-agents/create-samples`);
+      }>(`${API_URL}/mcp-agents/create-prebuilt`);
       return {
         agents: response.data.agents,
         message: response.data.message
       };
     } catch (error) {
-      console.error('Error creating sample agents:', error);
-      return { agents: [], message: 'Failed to create sample agents' };
+      console.error('Error creating pre-built agents:', error);
+      return { agents: [], message: 'Failed to create pre-built agents' };
+    }
+  },
+
+  // Get pre-built agents
+  getPrebuiltAgents: async (): Promise<MCPAgent[]> => {
+    try {
+      const response = await axios.get<{ agents: MCPAgent[]; count: number }>(`${API_URL}/mcp-agents/prebuilt`);
+      return response.data.agents;
+    } catch (error) {
+      console.error('Error fetching pre-built agents:', error);
+      return [];
+    }
+  },
+
+  // Get user-created agents
+  getUserCreatedAgents: async (): Promise<MCPAgent[]> => {
+    try {
+      const response = await axios.get<{ agents: MCPAgent[]; count: number }>(`${API_URL}/mcp-agents/user-created`);
+      return response.data.agents;
+    } catch (error) {
+      console.error('Error fetching user-created agents:', error);
+      return [];
     }
   }
 };

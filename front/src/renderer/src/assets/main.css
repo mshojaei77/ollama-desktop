@@ -135,7 +135,6 @@ code {
   align-items: center;
   border-radius: 22px;
   background-color: #202127;
-  backdrop-filter: blur(24px);
 }
 
 .versions li {
@@ -145,7 +144,6 @@ code {
   padding: 0 20px;
   font-size: 14px;
   line-height: 14px;
-  opacity: 0.8;
   &:last-child {
     border: none;
   }

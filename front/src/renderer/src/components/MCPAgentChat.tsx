@@ -203,14 +203,23 @@ function MCPAgentChat({ agentId, onBack }: MCPAgentChatProps): JSX.Element {
           <div className="flex items-center flex-1">
             <div className="flex-shrink-0 mr-3">
               {agent.icon ? (
-                <img 
-                  src={agent.icon}
-                  alt={agent.name}
-                  className="w-10 h-10 rounded-full"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = `https://via.placeholder.com/40x40?text=${encodeURIComponent(agent.name[0])}&quality=100`;
-                  }}
-                />
+                agent.icon.startsWith('./') || agent.icon.startsWith('/') || agent.icon.includes('.png') || agent.icon.includes('.jpg') || agent.icon.includes('.svg') ? (
+                  <div className="w-10 h-10 rounded-full bg-primary-foreground/20 flex items-center justify-center overflow-hidden">
+                    <img 
+                      src={agent.icon}
+                      alt={agent.name}
+                      className="w-8 h-8 object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="w-6 h-6 text-primary-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="m12 7 2 4-4 4"/><path d="m8 12-2-2"/><path d="m16 12 2-2"/></svg></div>';
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-primary-foreground/20 flex items-center justify-center text-lg">
+                    {agent.icon}
+                  </div>
+                )
               ) : (
                 <div className="w-10 h-10 rounded-full bg-primary-foreground/20 flex items-center justify-center">
                   <Bot className="w-6 h-6 text-primary-foreground" />
@@ -240,14 +249,21 @@ function MCPAgentChat({ agentId, onBack }: MCPAgentChatProps): JSX.Element {
         <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center text-center bg-background-light">
           <div className="mb-4 p-3 bg-primary-foreground rounded-full inline-flex items-center justify-center shadow-md">
             {agent.icon ? (
-              <img 
-                src={agent.icon}
-                alt={agent.name}
-                className="w-12 h-12"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = `https://via.placeholder.com/48x48?text=${encodeURIComponent(agent.name[0])}&quality=100`;
-                }}
-              />
+              agent.icon.startsWith('./') || agent.icon.startsWith('/') || agent.icon.includes('.png') || agent.icon.includes('.jpg') || agent.icon.includes('.svg') ? (
+                <img 
+                  src={agent.icon}
+                  alt={agent.name}
+                  className="w-12 h-12 object-contain"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                    (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="w-12 h-12 text-primary"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="m12 7 2 4-4 4"/><path d="m8 12-2-2"/><path d="m16 12 2-2"/></svg></div>';
+                  }}
+                />
+              ) : (
+                <div className="w-12 h-12 text-primary text-3xl flex items-center justify-center">
+                  {agent.icon}
+                </div>
+              )
             ) : (
               <Bot className="w-12 h-12 text-primary" />
             )}

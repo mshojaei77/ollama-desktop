@@ -190,6 +190,22 @@ async def delete_mcp_agent(agent_id: str, background_tasks: BackgroundTasks):
         app_logger.error(f"Error deleting MCP agent {agent_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting MCP agent: {str(e)}")
 
+@router.delete("/{agent_id}/permanent")
+async def delete_mcp_agent_permanently(agent_id: str, background_tasks: BackgroundTasks):
+    """Permanently delete an MCP agent from the database"""
+    try:
+        deleted = await mcp_service.delete_agent_permanently(agent_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"MCP agent {agent_id} not found")
+        
+        app_logger.info(f"Permanently deleted MCP agent: {agent_id}")
+        return {"status": "success", "message": f"MCP agent {agent_id} permanently deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error permanently deleting MCP agent {agent_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error permanently deleting MCP agent: {str(e)}")
+
 @router.post("/{agent_id}/start")
 async def start_mcp_agent(agent_id: str):
     """Start an MCP agent with enhanced error reporting"""
@@ -423,39 +439,65 @@ async def validate_agent_config(agent_id: str):
         app_logger.error(f"Error validating agent config {agent_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error validating agent config: {str(e)}")
 
-@router.post("/initialize-samples")
-async def initialize_sample_agents():
-    """Initialize sample MCP agents for new users"""
+@router.post("/initialize-prebuilt")
+async def initialize_prebuilt_agents():
+    """Initialize pre-built MCP agents for new users"""
     try:
-        created = await mcp_service.initialize_sample_agents_if_empty()
+        created = await mcp_service.initialize_prebuilt_agents_if_empty()
         if created:
-            app_logger.info("Sample MCP agents initialized")
+            app_logger.info("Pre-built MCP agents initialized")
             return {
                 "status": "success", 
-                "message": "Sample agents created successfully",
-                "samples_created": True
+                "message": "Pre-built agents created successfully",
+                "prebuilt_created": True
             }
         else:
             return {
                 "status": "success", 
-                "message": "Sample agents already exist or were not needed",
-                "samples_created": False
+                "message": "Pre-built agents already exist or were not needed",
+                "prebuilt_created": False
             }
     except Exception as e:
-        app_logger.error(f"Error initializing sample agents: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error initializing sample agents: {str(e)}")
+        app_logger.error(f"Error initializing pre-built agents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error initializing pre-built agents: {str(e)}")
 
-@router.post("/create-samples")
-async def create_sample_agents():
-    """Force create sample MCP agents"""
+@router.post("/create-prebuilt")
+async def create_prebuilt_agents():
+    """Force create pre-built MCP agents"""
     try:
-        sample_agents = await mcp_service.create_sample_agents()
-        app_logger.info(f"Created {len(sample_agents)} sample MCP agents")
+        prebuilt_agents = await mcp_service.create_prebuilt_agents()
+        app_logger.info(f"Created {len(prebuilt_agents)} pre-built MCP agents")
         return {
             "status": "success", 
-            "message": f"Created {len(sample_agents)} sample agents",
-            "agents": sample_agents
+            "message": f"Created {len(prebuilt_agents)} pre-built agents",
+            "agents": prebuilt_agents
         }
     except Exception as e:
-        app_logger.error(f"Error creating sample agents: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating sample agents: {str(e)}") 
+        app_logger.error(f"Error creating pre-built agents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating pre-built agents: {str(e)}")
+
+@router.get("/prebuilt")
+async def get_prebuilt_agents():
+    """Get all pre-built MCP agents"""
+    try:
+        agents = await mcp_service.get_prebuilt_agents()
+        return {
+            "agents": agents,
+            "count": len(agents)
+        }
+    except Exception as e:
+        app_logger.error(f"Error getting pre-built agents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting pre-built agents: {str(e)}")
+
+@router.get("/user-created")
+async def get_user_created_agents():
+    """Get all user-created MCP agents"""
+    try:
+        agents = await mcp_service.get_user_created_agents()
+        return {
+            "agents": agents,
+            "count": len(agents)
+        }
+    except Exception as e:
+        app_logger.error(f"Error getting user-created agents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user-created agents: {str(e)}") 

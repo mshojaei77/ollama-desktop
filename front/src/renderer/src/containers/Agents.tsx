@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Search, ChevronDown, Tag, RefreshCw, Plus } from 'lucide-react'
+import { Search, ChevronDown, Tag, RefreshCw, Plus, MoreVertical, Trash2 } from 'lucide-react'
 import AgentChat from '../components/AgentChat'
 import { getAgentIconPath } from '../utils'
 import mcpAgentService, { MCPAgent } from '../services/mcpAgentService'
+import DeleteMCPAgentModal from '../components/DeleteMCPAgentModal'
 
 function Agents(): JSX.Element {
   const [filter, setFilter] = useState('')
@@ -13,6 +14,8 @@ function Agents(): JSX.Element {
   const [allTags, setAllTags] = useState<string[]>([])
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const [showCreateAgent, setShowCreateAgent] = useState(false)
+  const [agentToDelete, setAgentToDelete] = useState<MCPAgent | null>(null)
+  const [showDropdownFor, setShowDropdownFor] = useState<string | null>(null)
 
   // Fetch MCP agents from API
   const fetchAgents = async () => {
@@ -61,9 +64,11 @@ function Agents(): JSX.Element {
 
   // Open chat with an agent
   const handleOpenChat = async (agentId: string, e?: React.MouseEvent) => {
-    // If the click was on a tag, prevent opening the chat
+    // If the click was on a tag or dropdown, prevent opening the chat
     if (e?.target instanceof HTMLElement && 
-       (e.target.closest('.agent-tag') || e.target.closest('.agent-tag-wrapper'))) {
+       (e.target.closest('.agent-tag') || 
+        e.target.closest('.agent-tag-wrapper') ||
+        e.target.closest('.agent-dropdown'))) {
       return;
     }
     
@@ -92,6 +97,38 @@ function Agents(): JSX.Element {
   const handleReload = () => {
     fetchAgents()
   }
+
+  // Handle delete confirmation
+  const handleDeleteAgent = async (agentId: string, permanent: boolean) => {
+    try {
+      // Always use permanent delete since we removed soft delete option
+      await mcpAgentService.deleteAgentPermanently(agentId)
+      
+      // Refresh the agents list
+      await fetchAgents()
+    } catch (error) {
+      console.error('Error deleting agent:', error)
+      throw error // Re-throw to be handled by the modal
+    }
+  }
+
+  // Toggle dropdown menu
+  const handleDropdownToggle = (agentId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setShowDropdownFor(showDropdownFor === agentId ? null : agentId)
+  }
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setShowDropdownFor(null)
+    }
+    
+    if (showDropdownFor) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [showDropdownFor])
 
   // If an agent is selected, show the chat interface
   if (selectedAgent) {
@@ -223,7 +260,37 @@ function Agents(): JSX.Element {
                     />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-foreground font-medium truncate text-lg">{agent.name}</p>
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="text-foreground font-medium truncate text-lg">{agent.name}</p>
+                      
+                      {/* Dropdown Menu */}
+                      <div className="agent-dropdown relative">
+                        <button
+                          onClick={(e) => handleDropdownToggle(agent.id, e)}
+                          className="p-1 rounded hover:bg-[hsl(var(--accent))]/30 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+                          title="More options"
+                        >
+                          <MoreVertical size={16} />
+                        </button>
+                        
+                        {showDropdownFor === agent.id && (
+                          <div className="absolute right-0 top-8 bg-[hsl(var(--card))] border border-[hsl(var(--border))] rounded-md shadow-lg z-20 min-w-[150px] py-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setAgentToDelete(agent)
+                                setShowDropdownFor(null)
+                              }}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors rounded-sm"
+                            >
+                              <Trash2 size={14} />
+                              Delete Agent
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
                     <div className="flex flex-wrap gap-1 mt-2 agent-tag-wrapper">
                       {agent.tags.map(tag => (
                         <span 
@@ -242,6 +309,15 @@ function Agents(): JSX.Element {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Delete Agent Modal */}
+      {agentToDelete && (
+        <DeleteMCPAgentModal
+          agent={agentToDelete}
+          onClose={() => setAgentToDelete(null)}
+          onDelete={handleDeleteAgent}
+        />
       )}
     </div>
   )

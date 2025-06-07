@@ -114,59 +114,59 @@ class MCPAgentService:
         logger.info("Enhanced agents database initialized")
     
     def _is_first_run(self) -> bool:
-        """Check if this is the first run (no sample agents created yet)"""
+        """Check if this is the first run (no pre-built agents created yet)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT value FROM service_metadata WHERE key = 'sample_agents_created'")
+        cursor.execute("SELECT value FROM service_metadata WHERE key = 'prebuilt_agents_created'")
         result = cursor.fetchone()
         conn.close()
         
         return result is None
     
-    def _mark_sample_agents_created(self):
-        """Mark that sample agents have been created"""
+    def _mark_prebuilt_agents_created(self):
+        """Mark that pre-built agents have been created"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute(
             "INSERT OR REPLACE INTO service_metadata (key, value) VALUES (?, ?)",
-            ("sample_agents_created", "true")
+            ("prebuilt_agents_created", "true")
         )
         
         conn.commit()
         conn.close()
     
-    async def _create_sample_agents(self):
-        """Create sample MCP agents with various useful configurations"""
+    async def _create_prebuilt_agents(self):
+        """Create pre-built MCP agents (shipped with the application)"""
         try:
-            sample_agents = self._get_sample_agent_templates()
+            prebuilt_agents = self._get_prebuilt_agent_templates()
             
-            for template in sample_agents:
+            for template in prebuilt_agents:
                 await self.create_agent(CreateMCPAgentRequest(
                     name=template.name,
                     description=template.description,
                     instructions=template.instructions,
                     mcp_servers=template.mcp_servers,
-                    tags=template.tags,
+                    tags=template.tags + ["prebuilt"],  # Add prebuilt tag
                     category=template.category,
                     example_prompts=template.example_prompts,
                     icon=template.icon,
                     welcome_message=template.welcome_message
                 ))
             
-            self._mark_sample_agents_created()
-            app_logger.info(f"Created {len(sample_agents)} sample MCP agents")
+            self._mark_prebuilt_agents_created()
+            app_logger.info(f"Created {len(prebuilt_agents)} pre-built MCP agents")
             
         except Exception as e:
-            app_logger.error(f"Error creating sample agents: {str(e)}")
+            app_logger.error(f"Error creating pre-built agents: {str(e)}")
     
-    def _get_sample_agent_templates(self) -> List[AgentTemplate]:
-        """Get predefined sample agent templates"""
+    def _get_prebuilt_agent_templates(self) -> List[AgentTemplate]:
+        """Get predefined pre-built agent templates (shipped with the application)"""
         return [
             # Filesystem Explorer Agent
             AgentTemplate(
-                name="📁 Filesystem Explorer",
+                name="Filesystem Explorer",
                 description="Explore and analyze files and directories with detailed insights",
                 category="development",
                 instructions=[
@@ -193,182 +193,8 @@ class MCPAgentService:
                     "What's in the README file?",
                     "Analyze the project's dependencies"
                 ],
-                icon="📁",
+                icon="./front/src/renderer/src/assets/agents/filesystem.png",
                 welcome_message="I'm your filesystem explorer! I can help you navigate, analyze, and understand your project structure and files. What would you like to explore today?"
-            ),
-            
-            # GitHub Assistant Agent
-            AgentTemplate(
-                name="🐙 GitHub Assistant",
-                description="Manage GitHub repositories, issues, and pull requests efficiently",
-                category="development",
-                instructions=[
-                    "You are a GitHub assistant that helps with repository management.",
-                    "Help users explore repositories, manage issues, and review pull requests.",
-                    "Use headings to organize your responses.",
-                    "Be concise and focus on relevant information.",
-                    "Always provide actionable insights and suggestions."
-                ],
-                mcp_servers=[
-                    MCPServerConfig(
-                        name="github",
-                        transport="stdio",
-                        command="npx -y @modelcontextprotocol/server-github",
-                        description="GitHub API integration for repository management",
-                        env={"GITHUB_TOKEN": ""}  # Will need to be configured by user
-                    )
-                ],
-                tags=["github", "git", "development", "collaboration"],
-                example_prompts=[
-                    "Show me recent issues in this repository",
-                    "What pull requests need review?",
-                    "Find issues labeled as 'bug'",
-                    "Show repository statistics",
-                    "List recent commits"
-                ],
-                icon="🐙",
-                welcome_message="I'm your GitHub assistant! I can help you manage repositories, track issues, review pull requests, and analyze your GitHub workflow. Note: You'll need to configure your GitHub token for full functionality."
-            ),
-            
-            # Search & Research Agent
-            AgentTemplate(
-                name="🔍 Research Assistant",
-                description="Search the web and gather comprehensive research on any topic",
-                category="research",
-                instructions=[
-                    "You are a research assistant that helps users find and analyze information.",
-                    "Use Brave search to find current and relevant information.",
-                    "Always verify information from multiple sources when possible.",
-                    "Provide well-structured summaries with clear headings.",
-                    "Include relevant links and sources in your responses.",
-                    "Be objective and highlight any limitations in the available information."
-                ],
-                mcp_servers=[
-                    MCPServerConfig(
-                        name="brave_search",
-                        transport="stdio",
-                        command="npx -y @modelcontextprotocol/server-brave-search",
-                        description="Web search capabilities using Brave Search API",
-                        env={"BRAVE_API_KEY": ""}  # Will need to be configured by user
-                    )
-                ],
-                tags=["search", "research", "web", "information"],
-                example_prompts=[
-                    "What's the latest news about AI developments?",
-                    "Research the benefits of renewable energy",
-                    "Find information about Python best practices",
-                    "What are the current trends in web development?",
-                    "Search for recent scientific studies on climate change"
-                ],
-                icon="🔍",
-                welcome_message="I'm your research assistant! I can search the web and help you gather comprehensive information on any topic. Note: You'll need to configure your Brave API key for search functionality."
-            ),
-            
-            # Travel Planning Agent
-            AgentTemplate(
-                name="✈️ Travel Planner",
-                description="Plan trips with accommodation search and location insights",
-                category="productivity",
-                instructions=[
-                    "You are a travel planning assistant that helps users plan their trips.",
-                    "Use Airbnb search to find accommodations and Google Maps for location information.",
-                    "Provide comprehensive travel advice including accommodation options.",
-                    "Consider factors like location, price, amenities, and user preferences.",
-                    "Offer practical travel tips and local insights when available.",
-                    "Structure your responses with clear sections for different aspects of travel planning."
-                ],
-                mcp_servers=[
-                    MCPServerConfig(
-                        name="airbnb",
-                        transport="stdio",
-                        command="npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-                        description="Search Airbnb listings for accommodations"
-                    ),
-                    MCPServerConfig(
-                        name="google_maps",
-                        transport="stdio",
-                        command="npx -y @modelcontextprotocol/server-google-maps",
-                        description="Location information and mapping services",
-                        env={"GOOGLE_MAPS_API_KEY": ""}  # Will need to be configured by user
-                    )
-                ],
-                tags=["travel", "planning", "accommodation", "maps"],
-                example_prompts=[
-                    "Find Airbnb listings in Tokyo for 2 people for 5 nights",
-                    "Plan a weekend trip to San Francisco",
-                    "What are the best areas to stay in Barcelona?",
-                    "Find pet-friendly accommodations in New York",
-                    "Compare accommodation options in London vs Paris"
-                ],
-                icon="✈️",
-                welcome_message="I'm your travel planning assistant! I can help you find accommodations, explore destinations, and plan amazing trips. Note: Google Maps integration requires an API key for full functionality."
-            ),
-            
-            # Analytical Thinking Agent
-            AgentTemplate(
-                name="🧠 Analytical Thinker",
-                description="Solve complex problems with structured thinking and financial analysis",
-                category="analysis",
-                instructions=[
-                    "You are an analytical assistant that helps users solve complex problems.",
-                    "Use the sequential thinking tool to break down complex problems step by step.",
-                    "Before taking any action, use the think tool as a scratchpad to organize your thoughts.",
-                    "Provide structured analysis with clear reasoning.",
-                    "When analyzing financial topics, use YFinance tools for current market data.",
-                    "Always verify your reasoning and double-check important conclusions.",
-                    "Use tables and clear formatting to present complex information."
-                ],
-                mcp_servers=[
-                    MCPServerConfig(
-                        name="sequential_thinking",
-                        transport="stdio",
-                        command="npx -y @modelcontextprotocol/server-sequential-thinking",
-                        description="Structured thinking and problem-solving capabilities"
-                    )
-                ],
-                tags=["analysis", "thinking", "problem-solving", "finance"],
-                example_prompts=[
-                    "Analyze the pros and cons of remote work",
-                    "Compare different investment strategies",
-                    "Break down this complex problem step by step",
-                    "Help me make a data-driven decision",
-                    "Analyze market trends for tech companies"
-                ],
-                icon="🧠",
-                welcome_message="I'm your analytical thinking assistant! I can help you solve complex problems, analyze data, and make structured decisions using systematic thinking approaches."
-            ),
-            
-            # Git Assistant Agent
-            AgentTemplate(
-                name="🌿 Git Assistant",
-                description="Manage Git repositories and version control workflows",
-                category="development",
-                instructions=[
-                    "You are a Git assistant that helps with version control workflows.",
-                    "Help users understand repository status, manage branches, and review changes.",
-                    "Provide clear explanations of Git operations and best practices.",
-                    "Suggest appropriate Git workflows based on the project context.",
-                    "Always explain the implications of Git operations before suggesting them.",
-                    "Format responses with clear sections and code examples when helpful."
-                ],
-                mcp_servers=[
-                    MCPServerConfig(
-                        name="git",
-                        transport="stdio",
-                        command="uvx mcp-server-git",
-                        description="Git repository management and version control operations"
-                    )
-                ],
-                tags=["git", "version-control", "development", "collaboration"],
-                example_prompts=[
-                    "What's the current status of this repository?",
-                    "Show me recent commits",
-                    "What files have been changed?",
-                    "Help me understand the branch structure",
-                    "What are the best practices for this workflow?"
-                ],
-                icon="🌿",
-                welcome_message="I'm your Git assistant! I can help you manage repositories, understand version control workflows, and follow Git best practices."
             )
         ]
     
@@ -561,7 +387,7 @@ class MCPAgentService:
             return None
     
     async def delete_agent(self, agent_id: str) -> bool:
-        """Delete an agent"""
+        """Delete an agent (soft delete)"""
         try:
             # Clean up any active agent
             if agent_id in self.active_agents:
@@ -583,6 +409,31 @@ class MCPAgentService:
             
         except Exception as e:
             app_logger.error(f"Error deleting agent {agent_id}: {str(e)}")
+            return False
+
+    async def delete_agent_permanently(self, agent_id: str) -> bool:
+        """Permanently delete an agent from the database"""
+        try:
+            # Clean up any active agent
+            if agent_id in self.active_agents:
+                await self._cleanup_agent(agent_id)
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM mcp_agents WHERE id = ?", (agent_id,))
+            deleted = cursor.rowcount > 0
+            
+            conn.commit()
+            conn.close()
+            
+            if deleted:
+                app_logger.info(f"Permanently deleted agent: {agent_id}")
+            
+            return deleted
+            
+        except Exception as e:
+            app_logger.error(f"Error permanently deleting agent {agent_id}: {str(e)}")
             return False
     
     async def start_agent(self, agent_id: str) -> Optional[OllamaMCPAgent]:
@@ -712,25 +563,26 @@ class MCPAgentService:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     async def _cleanup_agent(self, agent_id: str):
-        """Clean up an active agent with proper resource management"""
+        """Clean up an agent's resources"""
         try:
             if agent_id in self.active_agents:
                 agent = self.active_agents[agent_id]
-                if agent:
-                    await agent.cleanup()
+                # Clean up MCP connections properly
+                await agent.cleanup()
                 del self.active_agents[agent_id]
-                app_logger.info(f"Cleaned up enhanced agent: {agent_id}")
+                app_logger.info(f"Cleaned up agent: {agent_id}")
         except Exception as e:
-            app_logger.error(f"Error cleaning up agent {agent_id}: {str(e)}")
+            app_logger.warning(f"Error cleaning up agent {agent_id}: {e}")
+            # Remove from active agents even if cleanup failed
+            if agent_id in self.active_agents:
+                del self.active_agents[agent_id]
     
     async def cleanup_all_agents(self):
         """Clean up all active agents"""
-        try:
-            for agent_id in list(self.active_agents.keys()):
-                await self._cleanup_agent(agent_id)
-            app_logger.info("All enhanced MCP agents cleaned up")
-        except Exception as e:
-            app_logger.error(f"Error cleaning up all agents: {str(e)}")
+        agents_to_cleanup = list(self.active_agents.keys())
+        for agent_id in agents_to_cleanup:
+            await self._cleanup_agent(agent_id)
+        app_logger.info("All agents cleaned up")
     
     async def get_available_models(self) -> List[str]:
         """Get available Ollama models"""
@@ -834,56 +686,28 @@ class MCPAgentService:
             )
         ]
 
-    async def create_sample_agents(self) -> List[MCPAgent]:
-        """Create and initialize sample MCP agents using the best templates."""
-        sample_agents = []
+    async def create_prebuilt_agents(self) -> List[MCPAgent]:
+        """Create and initialize pre-built MCP agents (shipped with the application)."""
+        prebuilt_agents = []
         
-        # Get server templates for creating sample agents
-        templates = await self.get_mcp_server_templates()
+        # Get pre-built agent templates
+        templates = self._get_prebuilt_agent_templates()
         
-        # Select popular/useful templates for samples
-        sample_templates = [
-            next((t for t in templates if t.name == "Filesystem"), None),
-            next((t for t in templates if t.name == "GitHub"), None),
-            next((t for t in templates if t.name == "Web Search"), None),
-            next((t for t in templates if t.name == "Git"), None),
-        ]
-        
-        for template in sample_templates:
-            if template is None:
-                continue
-            
+        for template in templates:
             try:
                 # Create agent from template
                 agent_request = CreateMCPAgentRequest(
-                    name=f"Sample {template.name} Agent",
-                    description=f"A pre-configured {template.name.lower()} agent ready to use. {template.description}",
-                    instructions=[
-                        "You are a helpful AI assistant.",
-                        f"You have access to {template.name.lower()} tools.",
-                        "Use your tools when needed to help users effectively.",
-                        "Always explain what you're doing when using tools."
-                    ],
+                    name=template.name,
+                    description=template.description,
+                    instructions=template.instructions,
                     model_name="llama3.2",
                     model_provider="ollama",
-                    mcp_servers=[{
-                        "name": template.name.lower().replace(" ", "_"),
-                        "transport": template.transport,
-                        "command": template.command if template.command else None,
-                        "url": template.url if template.url else None,
-                        "enabled": True,
-                        "description": template.description,
-                        "env": {var: "" for var in template.env_vars} if template.env_vars else {}
-                    }],
-                    tags=template.tags + ["sample", "ready-to-use"],
+                    mcp_servers=[server.dict() for server in template.mcp_servers],
+                    tags=template.tags + ["prebuilt"],  # Add prebuilt tag
                     category=template.category,
-                    icon=template.icon or "🤖",
-                    example_prompts=[
-                        f"Help me use {template.name.lower()} effectively",
-                        f"What can you do with {template.name.lower()}?",
-                        f"Show me an example of {template.name.lower()} usage"
-                    ],
-                    welcome_message=f"I'm your {template.name} assistant! I can help you with {template.description.lower()}. What would you like to do?",
+                    icon=template.icon,
+                    example_prompts=template.example_prompts,
+                    welcome_message=template.welcome_message,
                     markdown=True,
                     show_tool_calls=True,
                     add_datetime_to_instructions=False
@@ -891,32 +715,48 @@ class MCPAgentService:
                 
                 # Check if agent with this name already exists
                 existing_agents = await self.get_all_agents()
-                if any(agent.name == agent_request.name for agent in existing_agents):
-                    continue
-                
-                agent = await self.create_agent(agent_request)
-                if agent:
-                    sample_agents.append(agent)
-                    logger.info(f"Created sample agent: {agent.name}")
+                if not any(agent.name == agent_request.name for agent in existing_agents):
+                    agent = await self.create_agent(agent_request)
+                    if agent:
+                        prebuilt_agents.append(agent)
+                        logger.info(f"Created pre-built agent: {agent.name}")
                     
             except Exception as e:
-                logger.error(f"Error creating sample agent for {template.name}: {str(e)}")
+                logger.error(f"Error creating pre-built agent {template.name}: {str(e)}")
         
-        return sample_agents
+        return prebuilt_agents
 
-    async def initialize_sample_agents_if_empty(self) -> bool:
-        """Initialize sample agents if no agents exist."""
+    async def initialize_prebuilt_agents_if_empty(self) -> bool:
+        """Initialize pre-built agents if no agents exist."""
         try:
             agents = await self.get_all_agents()
             if len(agents) == 0:
-                logger.info("No agents found, creating sample agents...")
-                sample_agents = await self.create_sample_agents()
-                logger.info(f"Created {len(sample_agents)} sample agents")
+                logger.info("No agents found, creating pre-built agents...")
+                prebuilt_agents = await self.create_prebuilt_agents()
+                logger.info(f"Created {len(prebuilt_agents)} pre-built agents")
                 return True
             return False
         except Exception as e:
-            logger.error(f"Error initializing sample agents: {str(e)}")
+            logger.error(f"Error initializing pre-built agents: {str(e)}")
             return False
+
+    async def get_prebuilt_agents(self) -> List[MCPAgent]:
+        """Get all pre-built agents (shipped with the application)."""
+        try:
+            agents = await self.get_all_agents()
+            return [agent for agent in agents if "prebuilt" in agent.tags]
+        except Exception as e:
+            logger.error(f"Error getting pre-built agents: {str(e)}")
+            return []
+
+    async def get_user_created_agents(self) -> List[MCPAgent]:
+        """Get all user-created agents (created through the UI)."""
+        try:
+            agents = await self.get_all_agents()
+            return [agent for agent in agents if "prebuilt" not in agent.tags]
+        except Exception as e:
+            logger.error(f"Error getting user-created agents: {str(e)}")
+            return []
 
 if __name__ == "__main__":
     import asyncio
@@ -924,8 +764,8 @@ if __name__ == "__main__":
     async def main():
         service = MCPAgentService()
         
-        # Initialize sample agents if none exist
-        await service.initialize_sample_agents_if_empty()
+        # Initialize pre-built agents if none exist
+        await service.initialize_prebuilt_agents_if_empty()
         
         # List all agents
         agents = await service.get_all_agents()

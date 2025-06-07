@@ -12,11 +12,11 @@ const buttonVariants = cva(
         default:
           'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] shadow hover:bg-gray-700 cursor-pointer',
         destructive:
-          'bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] shadow-sm hover:bg-[hsl(var(--destructive))/0.9]',
+          'bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] shadow-sm hover:bg-red-700',
         outline:
           'border border-[hsl(var(--input))] bg-[hsl(var(--background))] shadow-sm hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]',
         secondary:
-          'bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] shadow-sm hover:bg-[hsl(var(--secondary))/0.8]',
+          'bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] shadow-sm hover:bg-[hsl(var(--muted))]',
         ghost: 'hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]',
         link: 'text-[hsl(var(--primary))] underline-offset-4 hover:underline'
       },

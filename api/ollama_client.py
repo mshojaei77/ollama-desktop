@@ -542,21 +542,37 @@ class OllamaMCPAgent:
         pass
 
     async def cleanup(self):
-        """Clean up resources including MCP connections."""
+        """Clean up MCP connections and agent resources."""
         try:
-            # Close MCP connections if they exist
             if self.mcp_tools:
+                # Properly exit the MCP tools context manager
                 try:
                     await self.mcp_tools.__aexit__(None, None, None)
                 except Exception as e:
-                    app_logger.error(f"Error closing MCP connections: {e}")
+                    if self.verbose:
+                        app_logger.warning(f"Error during MCP cleanup: {e}")
                 finally:
                     self.mcp_tools = None
-
-            # Agno handles other cleanup automatically
-            app_logger.info("MCP Agent cleanup completed")
+            
+            # Clear agent reference
+            if self.agent:
+                self.agent = None
+                
+            if self.verbose:
+                app_logger.info("Ollama MCP Agent cleanup completed")
+                
         except Exception as e:
-            app_logger.error(f"Error during cleanup: {e}")
+            app_logger.error(f"Error during agent cleanup: {e}")
+            # Don't re-raise the error to prevent blocking shutdown
+
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.initialize_mcp()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.cleanup()
 
 
 # Legacy alias for backward compatibility

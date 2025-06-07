@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Search, ChevronDown, Tag, RefreshCw, Plus, Settings, Bot, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
+import { Search, ChevronDown, Tag, RefreshCw, Plus, Settings, Bot, AlertTriangle, CheckCircle, Clock, MoreVertical, Trash2 } from 'lucide-react'
 import mcpAgentService, { MCPAgent, MCPAgentListResponse } from '../services/mcpAgentService'
 import MCPAgentChat from '../components/MCPAgentChat'
-import CreateMCPAgentModal from '../components/CreateMCPAgentModal'
+import CreateMCPAgent from '../components/CreateMCPAgent'
+import DeleteMCPAgentModal from '../components/DeleteMCPAgentModal'
 
 function MCPAgents(): JSX.Element {
   const [filter, setFilter] = useState('')
@@ -16,6 +17,8 @@ function MCPAgents(): JSX.Element {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [totalServers, setTotalServers] = useState(0)
+  const [agentToDelete, setAgentToDelete] = useState<MCPAgent | null>(null)
+  const [showDropdownFor, setShowDropdownFor] = useState<string | null>(null)
 
   // Fetch agents from API with enhanced features
   const fetchAgents = async (options?: { category?: string; tag?: string; search?: string }) => {
@@ -46,23 +49,23 @@ function MCPAgents(): JSX.Element {
     fetchAgents()
   }, [])
 
-  // Initialize sample agents if needed
+  // Initialize pre-built agents if needed
   useEffect(() => {
-    const initializeSamples = async () => {
+    const initializePrebuilt = async () => {
       try {
-        const result = await mcpAgentService.initializeSampleAgents()
-        if (result.samples_created) {
-          // Refresh the agents list if samples were created
+        const result = await mcpAgentService.initializePrebuiltAgents()
+        if (result.prebuilt_created) {
+          // Refresh the agents list if pre-built agents were created
           await fetchAgents()
         }
       } catch (error) {
-        console.error('Error initializing sample agents:', error)
+        console.error('Error initializing pre-built agents:', error)
       }
     }
 
-    // Only initialize samples after the initial fetch
+    // Only initialize pre-built agents after the initial fetch
     if (!isLoading && agents.length === 0) {
-      initializeSamples()
+      initializePrebuilt()
     }
   }, [isLoading, agents.length])
 
@@ -94,11 +97,12 @@ function MCPAgents(): JSX.Element {
 
   // Open chat with an agent
   const handleOpenChat = (agentId: string, e?: React.MouseEvent) => {
-    // If the click was on a tag or status indicator, prevent opening the chat
+    // If the click was on a tag, status indicator, or dropdown, prevent opening the chat
     if (e?.target instanceof HTMLElement && 
        (e.target.closest('.agent-tag') || 
         e.target.closest('.agent-tag-wrapper') ||
-        e.target.closest('.agent-status'))) {
+        e.target.closest('.agent-status') ||
+        e.target.closest('.agent-dropdown'))) {
       return;
     }
     setSelectedAgent(agentId)
@@ -132,17 +136,17 @@ function MCPAgents(): JSX.Element {
     fetchAgents() // Refresh the list
   }
 
-  // Handle sample agents creation
-  const handleCreateSamples = async () => {
+  // Handle pre-built agents creation
+  const handleCreatePrebuilt = async () => {
     setIsLoading(true)
     try {
-      const result = await mcpAgentService.createSampleAgents()
+      const result = await mcpAgentService.createPrebuiltAgents()
       if (result.agents.length > 0) {
         await fetchAgents() // Refresh the list
       }
     } catch (error) {
-      console.error('Error creating sample agents:', error)
-      setError('Failed to create sample agents')
+      console.error('Error creating pre-built agents:', error)
+      setError('Failed to create pre-built agents')
     } finally {
       setIsLoading(false)
     }
@@ -154,6 +158,38 @@ function MCPAgents(): JSX.Element {
     setSelectedCategory('')
     setSelectedTag('')
   }
+
+  // Handle delete confirmation
+  const handleDeleteAgent = async (agentId: string, permanent: boolean) => {
+    try {
+      // Always use permanent delete since we removed soft delete option
+      await mcpAgentService.deleteAgentPermanently(agentId)
+      
+      // Refresh the agents list
+      await fetchAgents()
+    } catch (error) {
+      console.error('Error deleting agent:', error)
+      throw error // Re-throw to be handled by the modal
+    }
+  }
+
+  // Toggle dropdown menu
+  const handleDropdownToggle = (agentId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setShowDropdownFor(showDropdownFor === agentId ? null : agentId)
+  }
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setShowDropdownFor(null)
+    }
+    
+    if (showDropdownFor) {
+      document.addEventListener('click', handleClickOutside)
+      return () => document.removeEventListener('click', handleClickOutside)
+    }
+  }, [showDropdownFor])
 
   // Get agent status indicator
   const getAgentStatusIndicator = (agent: MCPAgent) => {
@@ -355,11 +391,11 @@ function MCPAgents(): JSX.Element {
                   Create Your First Agent
                 </button>
                 <button 
-                  onClick={handleCreateSamples}
+                  onClick={handleCreatePrebuilt}
                   disabled={isLoading}
                   className="px-4 py-2 bg-accent text-accent-foreground rounded-md hover:bg-accent/90 transition-colors disabled:opacity-50"
                 >
-                  {isLoading ? 'Creating...' : 'Create Sample Agents'}
+                  {isLoading ? 'Creating...' : 'Create Pre-built Agents'}
                 </button>
               </div>
             </>
@@ -377,9 +413,24 @@ function MCPAgents(): JSX.Element {
                 <div className="flex items-start space-x-4 mb-3">
                   <div className="flex-shrink-0">
                     {agent.icon ? (
-                      <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center text-2xl">
-                        {agent.icon}
-                      </div>
+                      agent.icon.startsWith('./') || agent.icon.startsWith('/') || agent.icon.includes('.png') || agent.icon.includes('.jpg') || agent.icon.includes('.svg') ? (
+                        <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center overflow-hidden">
+                          <img 
+                            src={agent.icon} 
+                            alt={agent.name}
+                            className="w-10 h-10 object-contain"
+                            onError={(e) => {
+                              // Fallback to Bot icon if image fails to load
+                              (e.target as HTMLImageElement).style.display = 'none';
+                              (e.target as HTMLImageElement).parentElement!.innerHTML = '<div class="w-8 h-8 text-primary"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="m12 7 2 4-4 4"/><path d="m8 12-2-2"/><path d="m16 12 2-2"/></svg></div>';
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center text-2xl">
+                          {agent.icon}
+                        </div>
+                      )
                     ) : (
                       <div className="w-14 h-14 rounded-full bg-primary/10 border border-border shadow-sm flex items-center justify-center">
                         <Bot className="w-8 h-8 text-primary" />
@@ -389,7 +440,36 @@ function MCPAgents(): JSX.Element {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between mb-2">
                       <p className="text-foreground font-medium truncate text-lg">{agent.name}</p>
-                      {getAgentStatusIndicator(agent)}
+                      <div className="flex items-center gap-2">
+                        {getAgentStatusIndicator(agent)}
+                        
+                        {/* Dropdown Menu */}
+                        <div className="agent-dropdown relative">
+                          <button
+                            onClick={(e) => handleDropdownToggle(agent.id, e)}
+                            className="p-1 rounded hover:bg-accent/30 text-muted-foreground hover:text-foreground transition-colors"
+                            title="More options"
+                          >
+                            <MoreVertical size={16} />
+                          </button>
+                          
+                          {showDropdownFor === agent.id && (
+                            <div className="absolute right-0 top-8 bg-card border border-border rounded-md shadow-lg z-20 min-w-[150px] py-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setAgentToDelete(agent)
+                                  setShowDropdownFor(null)
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors rounded-sm"
+                              >
+                                <Trash2 size={14} />
+                                Delete Agent
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground mb-2">{agent.model_provider}/{agent.model_name}</p>
                     
@@ -444,9 +524,18 @@ function MCPAgents(): JSX.Element {
 
       {/* Create Agent Modal */}
       {showCreateModal && (
-        <CreateMCPAgentModal
+        <CreateMCPAgent
           onClose={() => setShowCreateModal(false)}
-          onSuccess={handleAgentCreated}
+          onAgentCreated={handleAgentCreated}
+        />
+      )}
+
+      {/* Delete Agent Modal */}
+      {agentToDelete && (
+        <DeleteMCPAgentModal
+          agent={agentToDelete}
+          onClose={() => setAgentToDelete(null)}
+          onDelete={handleDeleteAgent}
         />
       )}
     </div>
