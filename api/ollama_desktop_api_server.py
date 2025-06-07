@@ -115,6 +115,10 @@ app = FastAPI(
         {
             "name": "System Prompts",
             "description": "Operations for managing user-configurable system prompts"
+        },
+        {
+            "name": "Settings",
+            "description": "Operations for managing application settings"
         }
     ]
 )
@@ -213,6 +217,32 @@ class SetActivePromptRequest(BaseModel):
 class SavePromptRequest(BaseModel):
     prompt_id: str
     config: SystemPromptConfig
+
+# Add after the existing Pydantic models (around line 200)
+
+class SettingsConfig(BaseModel):
+    base_url: str = "http://localhost:11434"
+    default_model: str = "llama3.2"
+    temperature: float = 0.7
+    top_p: float = 0.9
+    active_system_prompt_id: str = "default"
+    theme: str = "system"
+    auto_save_chats: bool = True
+    max_chat_history: int = 1000
+
+class SettingsResponse(BaseModel):
+    config: SettingsConfig
+    status: str = "success"
+
+class UpdateSettingsRequest(BaseModel):
+    base_url: Optional[str] = None
+    default_model: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    active_system_prompt_id: Optional[str] = None
+    theme: Optional[str] = None
+    auto_save_chats: Optional[bool] = None
+    max_chat_history: Optional[int] = None
 
 # ----- Helper Functions -----
 
@@ -811,6 +841,160 @@ async def pull_model_endpoint(model_name: str, stream: bool = True):
             # Fallback to default=str for any non-serializable values
             yield json.dumps(progress_data, default=str) + "\n"
     return StreamingResponse(iter_progress(), media_type="application/x-ndjson")
+
+# ----- Settings Endpoints -----
+
+@app.get("/settings", response_model=SettingsResponse, tags=["Settings"])
+async def get_settings():
+    """
+    Get current application settings.
+    
+    Returns the current configuration including base URL, default model,
+    active system prompt, theme preferences, and other application settings.
+    """
+    try:
+        # Get current configuration from ollama config
+        config = read_ollama_config()
+        
+        # Get active system prompt
+        active_prompt_id = config.get("activeSystemPrompt", "default") if config else "default"
+        
+        # Build settings response with current values or defaults
+        settings_config = SettingsConfig(
+            base_url=config.get("base_url", "http://localhost:11434") if config else "http://localhost:11434",
+            default_model=config.get("default_model", "llama3.2") if config else "llama3.2",
+            temperature=config.get("temperature", 0.7) if config else 0.7,
+            top_p=config.get("top_p", 0.9) if config else 0.9,
+            active_system_prompt_id=active_prompt_id,
+            theme=config.get("theme", "system") if config else "system",
+            auto_save_chats=config.get("auto_save_chats", True) if config else True,
+            max_chat_history=config.get("max_chat_history", 1000) if config else 1000
+        )
+        
+        return SettingsResponse(config=settings_config)
+        
+    except Exception as e:
+        app_logger.error(f"Error getting settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting settings: {str(e)}")
+
+@app.post("/settings", response_model=SettingsResponse, tags=["Settings"])
+async def update_settings(request: UpdateSettingsRequest):
+    """
+    Update application settings.
+    
+    Updates the application configuration with the provided settings.
+    Only non-null values in the request will be updated.
+    """
+    try:
+        # Get current configuration
+        config = read_ollama_config() or {}
+        
+        # Update only the provided fields
+        if request.base_url is not None:
+            config["base_url"] = request.base_url
+            # Validate base_url format
+            if not request.base_url.startswith(('http://', 'https://')):
+                raise HTTPException(status_code=400, detail="base_url must start with http:// or https://")
+        
+        if request.default_model is not None:
+            config["default_model"] = request.default_model
+        
+        if request.temperature is not None:
+            if not 0.0 <= request.temperature <= 2.0:
+                raise HTTPException(status_code=400, detail="temperature must be between 0.0 and 2.0")
+            config["temperature"] = request.temperature
+        
+        if request.top_p is not None:
+            if not 0.0 <= request.top_p <= 1.0:
+                raise HTTPException(status_code=400, detail="top_p must be between 0.0 and 1.0")
+            config["top_p"] = request.top_p
+        
+        if request.active_system_prompt_id is not None:
+            # Validate that the system prompt exists
+            all_prompts = get_all_system_prompts()
+            if request.active_system_prompt_id not in all_prompts:
+                raise HTTPException(status_code=400, detail=f"System prompt '{request.active_system_prompt_id}' not found")
+            config["activeSystemPrompt"] = request.active_system_prompt_id
+        
+        if request.theme is not None:
+            if request.theme not in ["light", "dark", "system"]:
+                raise HTTPException(status_code=400, detail="theme must be one of: light, dark, system")
+            config["theme"] = request.theme
+        
+        if request.auto_save_chats is not None:
+            config["auto_save_chats"] = request.auto_save_chats
+        
+        if request.max_chat_history is not None:
+            if request.max_chat_history < 1:
+                raise HTTPException(status_code=400, detail="max_chat_history must be at least 1")
+            config["max_chat_history"] = request.max_chat_history
+        
+        # Save the updated configuration
+        write_ollama_config(config)
+        
+        # Return the updated settings
+        updated_settings = SettingsConfig(
+            base_url=config.get("base_url", "http://localhost:11434"),
+            default_model=config.get("default_model", "llama3.2"),
+            temperature=config.get("temperature", 0.7),
+            top_p=config.get("top_p", 0.9),
+            active_system_prompt_id=config.get("activeSystemPrompt", "default"),
+            theme=config.get("theme", "system"),
+            auto_save_chats=config.get("auto_save_chats", True),
+            max_chat_history=config.get("max_chat_history", 1000)
+        )
+        
+        app_logger.info("Settings updated successfully")
+        return SettingsResponse(config=updated_settings)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error updating settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating settings: {str(e)}")
+
+@app.post("/settings/reset", response_model=SettingsResponse, tags=["Settings"])
+async def reset_settings():
+    """
+    Reset all settings to their default values.
+    
+    This will restore the application to its default configuration,
+    but will not affect saved system prompts or chat history.
+    """
+    try:
+        # Create default configuration
+        default_config = {
+            "base_url": "http://localhost:11434",
+            "default_model": "llama3.2",
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "activeSystemPrompt": "default",
+            "theme": "system",
+            "auto_save_chats": True,
+            "max_chat_history": 1000
+        }
+        
+        # Save the default configuration
+        write_ollama_config(default_config)
+        
+        # Return the reset settings
+        reset_settings_config = SettingsConfig(
+            base_url=default_config["base_url"],
+            default_model=default_config["default_model"],
+            temperature=default_config["temperature"],
+            top_p=default_config["top_p"],
+            active_system_prompt_id=default_config["activeSystemPrompt"],
+            theme=default_config["theme"],
+            auto_save_chats=default_config["auto_save_chats"],
+            max_chat_history=default_config["max_chat_history"]
+        )
+        
+        app_logger.info("Settings reset to defaults")
+        return SettingsResponse(config=reset_settings_config)
+        
+    except Exception as e:
+        app_logger.error(f"Error resetting settings: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error resetting settings: {str(e)}")
 
 # ----- System Prompt Endpoints -----
 

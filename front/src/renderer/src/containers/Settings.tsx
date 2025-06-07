@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, Plus, Edit, Trash2, Check, X, Save } from 'lucide-react'
+import { ArrowLeft, Plus, Edit, Trash2, Check, X, Save, RefreshCw, Settings as SettingsIcon, Palette, Cpu, MessageSquare, Database } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -26,6 +26,22 @@ interface SystemPromptsResponse {
   active_prompt_id: string
 }
 
+interface SettingsConfig {
+  base_url: string
+  default_model: string
+  temperature: number
+  top_p: number
+  active_system_prompt_id: string
+  theme: string
+  auto_save_chats: boolean
+  max_chat_history: number
+}
+
+interface SettingsResponse {
+  config: SettingsConfig
+  status: string
+}
+
 export default function Settings(): JSX.Element {
   const [theme, setTheme] = useState<string>('system')
   const [systemPrompts, setSystemPrompts] = useState<SystemPrompt[]>([])
@@ -42,6 +58,22 @@ export default function Settings(): JSX.Element {
   })
   const [isCreating, setIsCreating] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  
+  // New settings state
+  const [settings, setSettings] = useState<SettingsConfig>({
+    base_url: 'http://localhost:11434',
+    default_model: 'llama3.2',
+    temperature: 0.7,
+    top_p: 0.9,
+    active_system_prompt_id: 'default',
+    theme: 'system',
+    auto_save_chats: true,
+    max_chat_history: 1000
+  })
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [activeTab, setActiveTab] = useState<'general' | 'prompts' | 'advanced'>('general')
+  
   const navigate = useNavigate()
 
   // Load settings on component mount
@@ -49,8 +81,28 @@ export default function Settings(): JSX.Element {
     const savedTheme = localStorage.getItem('theme') || 'system'
     setTheme(savedTheme)
     applyTheme(savedTheme)
+    loadSettings()
     loadSystemPrompts()
+    loadAvailableModels()
   }, [])
+
+  const loadSettings = async () => {
+    try {
+      setSettingsLoading(true)
+      const response = await fetch('http://localhost:8000/settings')
+      if (!response.ok) throw new Error('Failed to fetch settings')
+      
+      const data: SettingsResponse = await response.json()
+      setSettings(data.config)
+      setTheme(data.config.theme)
+      applyTheme(data.config.theme)
+    } catch (error) {
+      console.error('Error loading settings:', error)
+      toast.error('Failed to load settings')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
 
   const loadSystemPrompts = async () => {
     try {
@@ -68,6 +120,76 @@ export default function Settings(): JSX.Element {
     }
   }
 
+  const loadAvailableModels = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/available-models')
+      if (!response.ok) throw new Error('Failed to fetch models')
+      
+      const data = await response.json()
+      setAvailableModels(data.models || [])
+    } catch (error) {
+      console.error('Error loading models:', error)
+      // Don't show error toast for models as it's not critical
+    }
+  }
+
+  const updateSettings = async (updates: Partial<SettingsConfig>) => {
+    try {
+      setSettingsLoading(true)
+      const response = await fetch('http://localhost:8000/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Failed to update settings')
+      }
+      
+      const data: SettingsResponse = await response.json()
+      setSettings(data.config)
+      
+      // Update theme if it was changed
+      if (updates.theme) {
+        setTheme(updates.theme)
+        applyTheme(updates.theme)
+        localStorage.setItem('theme', updates.theme)
+      }
+      
+      toast.success('Settings updated successfully')
+    } catch (error) {
+      console.error('Error updating settings:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to update settings')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
+  const resetSettings = async () => {
+    try {
+      setSettingsLoading(true)
+      const response = await fetch('http://localhost:8000/settings/reset', {
+        method: 'POST'
+      })
+      
+      if (!response.ok) throw new Error('Failed to reset settings')
+      
+      const data: SettingsResponse = await response.json()
+      setSettings(data.config)
+      setTheme(data.config.theme)
+      applyTheme(data.config.theme)
+      localStorage.setItem('theme', data.config.theme)
+      
+      toast.success('Settings reset to defaults')
+    } catch (error) {
+      console.error('Error resetting settings:', error)
+      toast.error('Failed to reset settings')
+    } finally {
+      setSettingsLoading(false)
+    }
+  }
+
   const applyTheme = (selectedTheme: string): void => {
     const root = window.document.documentElement
     root.classList.remove('dark', 'light')
@@ -81,9 +203,7 @@ export default function Settings(): JSX.Element {
   }
 
   const handleThemeChange = (newTheme: string): void => {
-    setTheme(newTheme)
-    applyTheme(newTheme)
-    localStorage.setItem('theme', newTheme)
+    updateSettings({ theme: newTheme })
   }
 
   const setActivePrompt = async (promptId: string) => {
@@ -97,6 +217,8 @@ export default function Settings(): JSX.Element {
       if (!response.ok) throw new Error('Failed to set active prompt')
       
       setActivePromptId(promptId)
+      // Also update the settings to reflect the change
+      await updateSettings({ active_system_prompt_id: promptId })
       toast.success(`Activated "${systemPrompts.find(p => p.id === promptId)?.config.name}" prompt`)
     } catch (error) {
       console.error('Error setting active prompt:', error)
@@ -207,39 +329,166 @@ export default function Settings(): JSX.Element {
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <h1 className="text-2xl font-bold">Settings</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <SettingsIcon className="h-6 w-6" />
+          Settings
+        </h1>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-1">
-        {/* Appearance Settings */}
-        <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
-          <div className="flex flex-col space-y-1.5 mb-4">
-            <h3 className="text-lg font-semibold">Appearance</h3>
-            <p className="text-sm text-[hsl(var(--muted-foreground))]">Customize how Ollama Desktop looks</p>
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 mb-6 bg-[hsl(var(--muted))] p-1 rounded-lg">
+        <button
+          onClick={() => setActiveTab('general')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'general'
+              ? 'bg-[hsl(var(--background))] text-[hsl(var(--foreground))] shadow-sm'
+              : 'text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]'
+          }`}
+        >
+          <Palette className="h-4 w-4" />
+          General
+        </button>
+        <button
+          onClick={() => setActiveTab('prompts')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'prompts'
+              ? 'bg-[hsl(var(--background))] text-[hsl(var(--foreground))] shadow-sm'
+              : 'text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]'
+          }`}
+        >
+          <MessageSquare className="h-4 w-4" />
+          System Prompts
+        </button>
+        <button
+          onClick={() => setActiveTab('advanced')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'advanced'
+              ? 'bg-[hsl(var(--background))] text-[hsl(var(--foreground))] shadow-sm'
+              : 'text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]'
+          }`}
+        >
+          <Cpu className="h-4 w-4" />
+          Advanced
+        </button>
+      </div>
+
+      {/* General Settings Tab */}
+      {activeTab === 'general' && (
+        <div className="space-y-6">
+          {/* Appearance Settings */}
+          <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
+            <div className="flex flex-col space-y-1.5 mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Palette className="h-5 w-5" />
+                Appearance
+              </h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">Customize how Ollama Desktop looks</p>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="theme" className="text-sm font-medium">Theme</label>
+                <select 
+                  id="theme"
+                  value={settings.theme}
+                  onChange={(e) => handleThemeChange(e.target.value)}
+                  disabled={settingsLoading}
+                  className="w-full h-9 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm disabled:opacity-50"
+                >
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                  <option value="system">System</option>
+                </select>
+              </div>
+            </div>
           </div>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="theme" className="text-sm font-medium">Theme</label>
-              <select 
-                id="theme"
-                value={theme}
-                onChange={(e) => handleThemeChange(e.target.value)}
-                className="w-full h-9 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm"
-              >
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
-                <option value="system">System</option>
-              </select>
+
+          {/* Connection Settings */}
+          <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
+            <div className="flex flex-col space-y-1.5 mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Database className="h-5 w-5" />
+                Connection
+              </h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">Configure Ollama server connection</p>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="base_url" className="text-sm font-medium">Base URL</label>
+                <div className="flex gap-2">
+                  <Input
+                    id="base_url"
+                    value={settings.base_url}
+                    onChange={(e) => setSettings({ ...settings, base_url: e.target.value })}
+                    placeholder="http://localhost:11434"
+                    disabled={settingsLoading}
+                  />
+                  <Button 
+                    onClick={() => updateSettings({ base_url: settings.base_url })}
+                    disabled={settingsLoading}
+                    size="sm"
+                  >
+                    {settingsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  </Button>
+                </div>
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  URL of your Ollama server (e.g., http://localhost:11434)
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Model Settings */}
+          <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
+            <div className="flex flex-col space-y-1.5 mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Cpu className="h-5 w-5" />
+                Default Model
+              </h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">Choose the default model for new conversations</p>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="default_model" className="text-sm font-medium">Model</label>
+                <div className="flex gap-2">
+                  <select 
+                    id="default_model"
+                    value={settings.default_model}
+                    onChange={(e) => setSettings({ ...settings, default_model: e.target.value })}
+                    disabled={settingsLoading}
+                    className="flex-1 h-9 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {availableModels.length > 0 ? (
+                      availableModels.map(model => (
+                        <option key={model} value={model}>{model}</option>
+                      ))
+                    ) : (
+                      <option value={settings.default_model}>{settings.default_model}</option>
+                    )}
+                  </select>
+                  <Button 
+                    onClick={() => updateSettings({ default_model: settings.default_model })}
+                    disabled={settingsLoading}
+                    size="sm"
+                  >
+                    {settingsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
+      )}
 
-        {/* System Prompts Settings */}
+      {/* System Prompts Tab */}
+      {activeTab === 'prompts' && (
         <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
           <div className="flex flex-col space-y-1.5 mb-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold">System Prompts</h3>
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5" />
+                  System Prompts
+                </h3>
                 <p className="text-sm text-[hsl(var(--muted-foreground))]">Manage AI assistant behavior and personality</p>
               </div>
               <Button 
@@ -394,7 +643,155 @@ export default function Settings(): JSX.Element {
             ))}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Advanced Settings Tab */}
+      {activeTab === 'advanced' && (
+        <div className="space-y-6">
+          {/* Model Parameters */}
+          <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
+            <div className="flex flex-col space-y-1.5 mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Cpu className="h-5 w-5" />
+                Model Parameters
+              </h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">Fine-tune model behavior</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label htmlFor="temperature" className="text-sm font-medium">
+                  Temperature: {settings.temperature}
+                </label>
+                <input
+                  id="temperature"
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={settings.temperature}
+                  onChange={(e) => setSettings({ ...settings, temperature: parseFloat(e.target.value) })}
+                  disabled={settingsLoading}
+                  className="w-full"
+                />
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Controls randomness (0 = deterministic, 2 = very creative)
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="top_p" className="text-sm font-medium">
+                  Top P: {settings.top_p}
+                </label>
+                <input
+                  id="top_p"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={settings.top_p}
+                  onChange={(e) => setSettings({ ...settings, top_p: parseFloat(e.target.value) })}
+                  disabled={settingsLoading}
+                  className="w-full"
+                />
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Controls diversity of word selection
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <Button 
+                onClick={() => updateSettings({ 
+                  temperature: settings.temperature, 
+                  top_p: settings.top_p 
+                })}
+                disabled={settingsLoading}
+                size="sm"
+              >
+                {settingsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Parameters
+              </Button>
+            </div>
+          </div>
+
+          {/* Chat Management */}
+          <div className="border border-[hsl(var(--border))] rounded-lg p-6 shadow-sm bg-[hsl(var(--card))]">
+            <div className="flex flex-col space-y-1.5 mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <MessageSquare className="h-5 w-5" />
+                Chat Management
+              </h3>
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">Configure chat behavior and storage</p>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium">Auto-save chats</label>
+                  <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                    Automatically save chat history
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.auto_save_chats}
+                  onChange={(e) => setSettings({ ...settings, auto_save_chats: e.target.checked })}
+                  disabled={settingsLoading}
+                  className="rounded"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="max_history" className="text-sm font-medium">
+                  Max chat history: {settings.max_chat_history}
+                </label>
+                <input
+                  id="max_history"
+                  type="range"
+                  min="100"
+                  max="5000"
+                  step="100"
+                  value={settings.max_chat_history}
+                  onChange={(e) => setSettings({ ...settings, max_chat_history: parseInt(e.target.value) })}
+                  disabled={settingsLoading}
+                  className="w-full"
+                />
+                <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                  Maximum number of messages to keep in history
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <Button 
+                onClick={() => updateSettings({ 
+                  auto_save_chats: settings.auto_save_chats,
+                  max_chat_history: settings.max_chat_history
+                })}
+                disabled={settingsLoading}
+                size="sm"
+              >
+                {settingsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Save Chat Settings
+              </Button>
+            </div>
+          </div>
+
+          {/* Reset Settings */}
+          <div className="border border-red-200 rounded-lg p-6 shadow-sm bg-red-50 dark:bg-red-950 dark:border-red-800">
+            <div className="flex flex-col space-y-1.5 mb-4">
+              <h3 className="text-lg font-semibold text-red-800 dark:text-red-200">Reset Settings</h3>
+              <p className="text-sm text-red-600 dark:text-red-300">
+                Reset all settings to their default values. This will not affect saved prompts or chat history.
+              </p>
+            </div>
+            <Button 
+              onClick={resetSettings}
+              disabled={settingsLoading}
+              variant="outline"
+              className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900"
+            >
+              {settingsLoading ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Reset to Defaults
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
